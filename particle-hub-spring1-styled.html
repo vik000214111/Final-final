@@ -617,103 +617,110 @@
         canopy: []
       };
 
-      const cx = width * 0.35;
-      const cy = height * 0.55;
+      // ✅ 树居中
+      const cx = width * 0.5;
+      const baseY = height * 0.72;
 
-      for (let i = 0; i < 40; i++) {
+      // ✅ 干净的树干：少量粒子（不抖）
+      for (let i = 0; i < 180; i++) {
+        const t = i / 180;
+        const x = cx + random(-18, 18) * (1 - t);
+        const y = lerp(baseY, height * 0.36, t) + random(-2, 2);
         springTree.trunk.push({
-          x: cx + random(-15, 15),
-          y: cy + random(-30, 60),
-          size: random(3, 8),
-          alpha: random(120, 200)
+          x, y,
+          size: lerp(18, 6, t) + random(-1, 1),
+          alpha: 190
         });
       }
 
-      for (let k = 0; k < 6; k++) {
-        const ox = random(-120, 120);
-        const oy = random(-100, 60);
-        for (let i = 0; i < 200; i++) {
+      // ✅ 树冠：几个大团（静态点阵，不抖动）
+      const canopyCenters = [
+        { x: cx - 160, y: height * 0.34, r: 170 },
+        { x: cx,       y: height * 0.30, r: 210 },
+        { x: cx + 160, y: height * 0.34, r: 170 },
+        { x: cx - 90,  y: height * 0.42, r: 170 },
+        { x: cx + 90,  y: height * 0.42, r: 170 },
+      ];
+
+      for (const c of canopyCenters) {
+        for (let i = 0; i < 520; i++) {
           const a = random(TWO_PI);
-          const r = pow(random(), 0.6) * random(50, 100);
+          const rr = pow(random(), 0.58) * c.r;
           springTree.canopy.push({
-            x: cx + ox + cos(a) * r,
-            y: cy + oy + sin(a) * r * 0.7,
-            size: random(4, 14),
-            alpha: random(100, 200),
-            ox: random(-1, 1),
-            oy: random(-1, 1)
+            x: c.x + cos(a) * rr,
+            y: c.y + sin(a) * rr * 0.75,
+            size: random(3, 10),
+            alpha: random(90, 175)
           });
         }
       }
 
-      for (let i = 0; i < 150; i++) {
-        springTree.canopy.push({
-          x: random(width),
-          y: height * 0.8 + random(-20, 40),
-          size: random(2, 6),
-          alpha: random(80, 150),
-          ox: 0,
-          oy: 0
-        });
-      }
+      // ❌ 删除地面散点（不要再往 springTree.canopy 里 push random(width) 的部分）
     }
 
     function drawSpring() {
+      // 手势 → 风（更稳一点）
+      let windStrength = 0;
       if (handData.hands.length > 0) {
         const hand = handData.hands[0];
-        windVector.x = lerp(windVector.x, hand.velocity.x * 0.15, 0.1);
-        windVector.y = lerp(windVector.y, hand.velocity.y * 0.15, 0.1);
+        windVector.x = lerp(windVector.x, hand.velocity.x * 0.12, 0.15);
+        windVector.y = lerp(windVector.y, hand.velocity.y * 0.10, 0.15);
+        windStrength = abs(windVector.x) + abs(windVector.y);
       } else {
-        windVector.x = lerp(windVector.x, 0, 0.05);
-        windVector.y = lerp(windVector.y, 0, 0.05);
+        windVector.x = lerp(windVector.x, 0, 0.12);
+        windVector.y = lerp(windVector.y, 0, 0.12);
+        windStrength = abs(windVector.x) + abs(windVector.y);
       }
 
-      if (abs(windVector.x) + abs(windVector.y) > 1 && frameCount % 3 === 0) {
+      // ✅ 只有有风才生成花瓣（避免一直飘造成噪）
+      if (windStrength > 1.2 && frameCount % 3 === 0) {
         springPetals.push({
-          x: random(width),
-          y: random(-50, height * 0.3),
-          vx: windVector.x,
-          vy: random(0.5, 1.5),
+          x: width * 0.5 + random(-220, 220),
+          y: height * 0.30 + random(-120, 120),
+          vx: windVector.x * 0.8,
+          vy: 0.6 + random(0.2, 1.1),
           size: random(3, 7),
-          alpha: random(140, 220),
-          wobble: random(TWO_PI)
+          alpha: random(110, 190),
+          rot: random(TWO_PI),
+          rotSpd: random(-0.06, 0.06)
         });
       }
 
+      // 更新花瓣
       for (let i = springPetals.length - 1; i >= 0; i--) {
         const p = springPetals[i];
-        p.x += p.vx + windVector.x;
-        p.y += p.vy + windVector.y * 0.5;
-        p.vx *= 0.98;
-        p.wobble += 0.05;
+        p.vy += 0.02;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rot += p.rotSpd;
+        p.vx *= 0.985;
 
-        if (p.y > height + 50 || p.x < -50 || p.x > width + 50) {
+        if (p.y > height + 40 || p.x < -60 || p.x > width + 60) {
           springPetals.splice(i, 1);
         }
       }
 
+      // ✅ 画树干（少量、干净）
       noStroke();
       for (const p of springTree.trunk) {
         fill(STYLE.trunk[0], STYLE.trunk[1], STYLE.trunk[2], p.alpha);
         circle(p.x, p.y, p.size);
       }
 
+      // ✅ 画树冠（静态点阵，不抖、不发光扩散）
       for (const p of springTree.canopy) {
         fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], p.alpha);
-        const x = p.x + sin(frameCount * 0.008 + p.oy) * p.ox;
-        const y = p.y + cos(frameCount * 0.008 + p.ox) * p.oy;
-        circle(x, y, p.size);
-
-        if (p.size > 10) {
-          fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], p.alpha * 0.4);
-          circle(x, y, p.size * 1.6);
-        }
+        circle(p.x, p.y, p.size);
       }
 
+      // ✅ 画花瓣（数量本来就少，不会满屏噪）
       for (const p of springPetals) {
-        fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], p.alpha);
-        const x = p.x + sin(p.wobble) * 2;
-        circle(x, p.y, p.size);
+        push();
+        translate(p.x, p.y);
+        rotate(p.rot);
+        fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], p.alpha);
+        ellipse(0, 0, p.size * 0.9, p.size * 1.5);
+        pop();
       }
 
       drawBackButton();
@@ -724,7 +731,7 @@
       textSize(10);
       text('Move hand to create wind', 30, height - 15);
 
-      if (abs(windVector.x) + abs(windVector.y) > 0.5) {
+      if (windStrength > 0.5) {
         push();
         stroke(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 100);
         strokeWeight(2);
