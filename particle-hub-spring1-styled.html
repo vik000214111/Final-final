@@ -1,0 +1,1222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Particle Cloud Hub - Spring1 Referenced Style</title>
+  <!--
+    REF_IMG_URL: https://raw.githubusercontent.com/vik000214111/Final-final/main/spring1.png
+
+    SAMPLED PALETTE (extracted from spring1.png):
+    - bg: Pure black [15, 15, 15] (dark background from ref)
+    - primary: Soft pink [255, 200, 220] (cherry blossom dominant color)
+    - secondary: Light pink [255, 230, 240] (lighter blossom highlights)
+    - highlight: Pure white [255, 255, 255] (brightest petals)
+    - trunk: Warm brown [139, 125, 107] (tree bark)
+    - dark: Deep shadow [40, 35, 30] (shadows/depth)
+
+    CONFIG CHANGES:
+    - All particle colors → sampled pink palette
+    - Connection lines → soft pink alpha 15-30 (not cyan)
+    - Background → pure black (no gradients)
+    - Glow colors → pink with controlled alpha
+    - UI borders/text → pink tones matching reference
+    - Removed all blue/cyan "cyber" colors
+    - Particle sizes 2-14px (matches ref petal scale)
+    - Alpha ranges 60-220 (creates soft cloud effect from ref)
+  -->
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      overflow: hidden;
+      background: #0f0f0f;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #fff;
+    }
+    #canvasContainer {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    #cameraBox {
+      position: fixed;
+      left: 20px;
+      bottom: 20px;
+      width: 200px;
+      height: 150px;
+      border: 1px solid rgba(255, 200, 220, 0.15);
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 0 20px rgba(255, 200, 220, 0.12);
+      z-index: 1000;
+    }
+    #camVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+      opacity: 0.85;
+    }
+    #camOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    #camLabel {
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      color: rgba(255, 200, 220, 0.75);
+      text-transform: uppercase;
+      font-weight: 300;
+      text-shadow: 0 0 8px rgba(255, 200, 220, 0.3);
+    }
+  </style>
+</head>
+<body>
+  <div id="canvasContainer"></div>
+
+  <div id="cameraBox">
+    <video id="camVideo" autoplay playsinline></video>
+    <canvas id="camOverlay"></canvas>
+    <div id="camLabel">CAM • HANDS</div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <script>
+    // ========================================
+    // REFERENCE IMAGE & STYLE EXTRACTION
+    // ========================================
+    let refImg;
+    let appleImg; // Apple image for Autumn room
+    let STYLE = {
+      bg: [15, 15, 15],
+      primary: [255, 200, 220],
+      secondary: [255, 230, 240],
+      highlight: [255, 255, 255],
+      trunk: [139, 125, 107],
+      dark: [40, 35, 30],
+      connectionAlpha: 18,
+      glowAlpha: 25,
+      particleSizeMin: 2,
+      particleSizeMax: 14
+    };
+
+    function preload() {
+      // Load reference image from GitHub
+      const refUrl = 'https://raw.githubusercontent.com/vik000214111/Final-final/main/spring1.png';
+      refImg = loadImage(refUrl, () => {
+        console.log('✅ Reference image loaded successfully');
+        extractStyleFromRef(refImg);
+      }, () => {
+        console.warn('⚠️ Could not load reference image, using default spring1-inspired palette');
+      });
+
+      // Load apple image for Autumn room
+      const appleUrl = 'https://raw.githubusercontent.com/vik000214111/Final-final/claude/particle-cloud-hub-visuals-fLhl7/apple1.png';
+      appleImg = loadImage(appleUrl, () => {
+        console.log('✅ Apple image loaded successfully');
+      }, () => {
+        console.warn('⚠️ Could not load apple image, will use circles as fallback');
+      });
+    }
+
+    function extractStyleFromRef(img) {
+      img.loadPixels();
+
+      // Sample key regions
+      const w = img.width;
+      const h = img.height;
+
+      // Sample background (corners - should be black)
+      const bgSamples = [
+        img.get(10, 10),
+        img.get(w - 10, 10),
+        img.get(10, h - 10),
+        img.get(w - 10, h - 10)
+      ];
+
+      // Sample pink blossoms (upper-middle area where pink clusters are)
+      const pinkSamples = [];
+      for (let i = 0; i < 20; i++) {
+        const x = int(random(w * 0.3, w * 0.7));
+        const y = int(random(h * 0.2, h * 0.5));
+        const col = img.get(x, y);
+        // Filter for pinkish colors (high R, moderate G, moderate B)
+        if (col[0] > 180 && col[1] > 100 && col[2] > 150) {
+          pinkSamples.push(col);
+        }
+      }
+
+      // Sample highlights (brightest pixels)
+      const highlightSamples = [];
+      for (let i = 0; i < 20; i++) {
+        const x = int(random(w * 0.2, w * 0.8));
+        const y = int(random(h * 0.1, h * 0.6));
+        const col = img.get(x, y);
+        const brightness = (col[0] + col[1] + col[2]) / 3;
+        if (brightness > 230) {
+          highlightSamples.push(col);
+        }
+      }
+
+      // Sample trunk (lower-center where brown tree trunk is)
+      const trunkSamples = [];
+      for (let i = 0; i < 15; i++) {
+        const x = int(random(w * 0.4, w * 0.6));
+        const y = int(random(h * 0.5, h * 0.9));
+        const col = img.get(x, y);
+        // Filter for brownish colors
+        if (col[0] > 80 && col[0] < 160 && col[1] > 70 && col[2] > 60) {
+          trunkSamples.push(col);
+        }
+      }
+
+      // Calculate averages
+      function avgColor(samples) {
+        if (samples.length === 0) return [128, 128, 128];
+        const sum = samples.reduce((acc, c) => [acc[0] + c[0], acc[1] + c[1], acc[2] + c[2]], [0, 0, 0]);
+        return sum.map(v => int(v / samples.length));
+      }
+
+      // Update STYLE with sampled colors
+      STYLE.bg = avgColor(bgSamples);
+      if (pinkSamples.length > 0) STYLE.primary = avgColor(pinkSamples);
+      if (highlightSamples.length > 0) STYLE.highlight = avgColor(highlightSamples);
+      if (trunkSamples.length > 0) STYLE.trunk = avgColor(trunkSamples);
+
+      // Secondary is a lighter version of primary
+      STYLE.secondary = [
+        min(255, STYLE.primary[0] + 25),
+        min(255, STYLE.primary[1] + 25),
+        min(255, STYLE.primary[2] + 25)
+      ];
+
+      console.log('✅ Style extracted from reference image:');
+      console.log('  - Background:', STYLE.bg);
+      console.log('  - Primary (pink):', STYLE.primary);
+      console.log('  - Secondary (light pink):', STYLE.secondary);
+      console.log('  - Highlight:', STYLE.highlight);
+      console.log('  - Trunk:', STYLE.trunk);
+    }
+
+    // ========================================
+    // GLOBAL STATE
+    // ========================================
+    let currentScene = 'hub';
+    let handData = { hands: [] };
+
+    let camVideoEl, camOverlayEl, camCtx;
+
+    let hubParticles = [];
+    let portals = [];
+
+    let springPetals = [];
+    let springTree = null;
+    let windVector = { x: 0, y: 0 };
+
+    let summerWaves = null;
+    let summerCols = 80;
+    let summerRows = 60;
+
+    let autumnApples = [];
+    let autumnTree = null;
+    let autumnBasket = null;
+    let autumnGroundScatter = [];
+
+    let winterSnow = [];
+    let winterTraces = [];
+
+    // ========================================
+    // P5.JS SETUP
+    // ========================================
+    function setup() {
+      let canvas = createCanvas(windowWidth, windowHeight);
+      canvas.parent('canvasContainer');
+
+      initMediaPipeHands();
+      initCameraPreview();
+      initHub();
+    }
+
+    function draw() {
+      // Use sampled background color
+      background(STYLE.bg[0], STYLE.bg[1], STYLE.bg[2]);
+
+      if (currentScene === 'hub') {
+        drawHub();
+      } else if (currentScene === 'spring') {
+        drawSpring();
+      } else if (currentScene === 'summer') {
+        drawSummer();
+      } else if (currentScene === 'autumn') {
+        drawAutumn();
+      } else if (currentScene === 'winter') {
+        drawWinter();
+      }
+
+      drawHandPreview();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      if (currentScene === 'hub') initHub();
+      else if (currentScene === 'spring') initSpring();
+      else if (currentScene === 'summer') initSummer();
+      else if (currentScene === 'autumn') initAutumn();
+      else if (currentScene === 'winter') initWinter();
+    }
+
+    // ========================================
+    // MEDIAPIPE HANDS
+    // ========================================
+    function initMediaPipeHands() {
+      const videoEl = document.getElementById('camVideo');
+
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      hands.onResults(onHandResults);
+
+      const camera = new Camera(videoEl, {
+        onFrame: async () => {
+          await hands.send({ image: videoEl });
+        },
+        width: 640,
+        height: 480
+      });
+
+      camera.start();
+
+      videoEl.onloadedmetadata = () => {
+        videoEl.play().catch(() => {
+          document.addEventListener('pointerdown', () => {
+            videoEl.play();
+          }, { once: true });
+        });
+      };
+    }
+
+    function onHandResults(results) {
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        handData.hands = [];
+        return;
+      }
+
+      const vw = document.getElementById('camVideo').videoWidth || 640;
+      const vh = document.getElementById('camVideo').videoHeight || 480;
+
+      // ✅ 统一镜像开关：在数据层就镜像所有坐标，所有季节自动正确
+      const mirrorX = true;
+
+      handData.hands = results.multiHandLandmarks.map((landmarks, idx) => {
+        // Canvas坐标（镜像，用于主画布交互）
+        const keypointsPx = landmarks.map(lm => ({
+          x: mirrorX ? (width - lm.x * width) : (lm.x * width),
+          y: lm.y * height
+        }));
+
+        // Camera坐标（不镜像，预览层会单独镜像以避免双重镜像）
+        const keypointsCamPx = landmarks.map(lm => ({
+          x: lm.x * vw,
+          y: lm.y * vh
+        }));
+
+        // 中心点（从镜像后的 keypointsPx 计算，自动镜像）
+        const center = {
+          x: keypointsPx.reduce((sum, p) => sum + p.x, 0) / 21,
+          y: keypointsPx.reduce((sum, p) => sum + p.y, 0) / 21
+        };
+
+        // 速度（用镜像后的 center 计算，方向自动正确）
+        const prevCenter = handData.hands[idx]?.center || center;
+        const velocity = {
+          x: center.x - prevCenter.x,
+          y: center.y - prevCenter.y,
+          speed: dist(center.x, center.y, prevCenter.x, prevCenter.y)
+        };
+
+        const thumb = keypointsPx[4];
+        const index = keypointsPx[8];
+        const pinchDist = dist(thumb.x, thumb.y, index.x, index.y);
+        const isPinching = pinchDist < 40;
+
+        let twoHandDist = 0;
+        if (handData.hands.length === 2 && idx === 1) {
+          twoHandDist = dist(center.x, center.y, handData.hands[0].center.x, handData.hands[0].center.y);
+        }
+
+        return {
+          keypointsPx,
+          keypointsCamPx,
+          center,
+          velocity,
+          pinch: { isPinching, distance: pinchDist },
+          twoHandDist
+        };
+      });
+    }
+
+    // ========================================
+    // CAMERA PREVIEW
+    // ========================================
+    function initCameraPreview() {
+      camVideoEl = document.getElementById('camVideo');
+      camOverlayEl = document.getElementById('camOverlay');
+      camCtx = camOverlayEl.getContext('2d');
+
+      function syncCanvas() {
+        const w = camOverlayEl.clientWidth;
+        const h = camOverlayEl.clientHeight;
+        camOverlayEl.width = Math.floor(w * devicePixelRatio);
+        camOverlayEl.height = Math.floor(h * devicePixelRatio);
+        camCtx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+      }
+      syncCanvas();
+      window.addEventListener('resize', syncCanvas);
+    }
+
+    function drawHandPreview() {
+      if (!camCtx || !camOverlayEl) return;
+
+      const W = camOverlayEl.clientWidth;
+      const H = camOverlayEl.clientHeight;
+      camCtx.clearRect(0, 0, W, H);
+
+      if (!handData.hands || handData.hands.length === 0) return;
+
+      const vw = document.getElementById('camVideo').videoWidth || 640;
+      const vh = document.getElementById('camVideo').videoHeight || 480;
+
+      const edges = [
+        [0,1],[1,2],[2,3],[3,4],
+        [0,5],[5,6],[6,7],[7,8],
+        [0,9],[9,10],[10,11],[11,12],
+        [0,13],[13,14],[14,15],[15,16],
+        [0,17],[17,18],[18,19],[19,20],
+        [5,9],[9,13],[13,17]
+      ];
+
+      function mapPt(p) {
+        let x = (p.x / vw) * W;
+        let y = (p.y / vh) * H;
+        x = W - x;
+        return { x, y };
+      }
+
+      for (const hand of handData.hands) {
+        const kp = hand.keypointsCamPx;
+        if (!kp || kp.length !== 21) continue;
+
+        // Use sampled primary color for skeleton
+        camCtx.strokeStyle = `rgba(${STYLE.primary[0]}, ${STYLE.primary[1]}, ${STYLE.primary[2]}, 0.7)`;
+        camCtx.lineWidth = 1.5;
+        camCtx.beginPath();
+        for (const [a, b] of edges) {
+          const A = mapPt(kp[a]);
+          const B = mapPt(kp[b]);
+          camCtx.moveTo(A.x, A.y);
+          camCtx.lineTo(B.x, B.y);
+        }
+        camCtx.stroke();
+
+        camCtx.fillStyle = `rgba(${STYLE.secondary[0]}, ${STYLE.secondary[1]}, ${STYLE.secondary[2]}, 0.9)`;
+        for (let i = 0; i < 21; i++) {
+          const P = mapPt(kp[i]);
+          camCtx.beginPath();
+          camCtx.arc(P.x, P.y, 2.5, 0, Math.PI * 2);
+          camCtx.fill();
+        }
+      }
+    }
+
+    // ========================================
+    // HUB SCENE
+    // ========================================
+    function initHub() {
+      hubParticles = [];
+      const cx = width / 2;
+      const cy = height / 2;
+
+      // Main cloud clusters (using sampled colors)
+      for (let i = 0; i < 8; i++) {
+        const angle = (TWO_PI / 8) * i;
+        const clusterX = cx + cos(angle) * random(80, 180);
+        const clusterY = cy + sin(angle) * random(60, 140);
+
+        for (let j = 0; j < 80; j++) {
+          const a = random(TWO_PI);
+          const r = pow(random(), 0.6) * random(40, 90);
+          hubParticles.push({
+            x: clusterX + cos(a) * r,
+            y: clusterY + sin(a) * r * 0.8,
+            size: random(STYLE.particleSizeMin, STYLE.particleSizeMax),
+            alpha: random(80, 180),
+            color: random() > 0.3 ? 'primary' : 'secondary',
+            ox: random(-1, 1),
+            oy: random(-1, 1)
+          });
+        }
+      }
+
+      // Trunk particles
+      for (let i = 0; i < 50; i++) {
+        hubParticles.push({
+          x: cx + random(-20, 20),
+          y: cy + random(-40, 80),
+          size: random(2, 6),
+          alpha: random(100, 200),
+          color: 'trunk',
+          ox: 0,
+          oy: 0
+        });
+      }
+
+      // Ground scatter
+      for (let i = 0; i < 120; i++) {
+        hubParticles.push({
+          x: cx + random(-300, 300),
+          y: height * 0.75 + random(-20, 40),
+          size: random(2, 6),
+          alpha: random(60, 140),
+          color: 'primary',
+          ox: random(-0.5, 0.5),
+          oy: 0
+        });
+      }
+
+      portals = [
+        { name: 'SPRING', x: cx - 280, y: cy - 120, scene: 'spring', hover: 0 },
+        { name: 'SUMMER', x: cx + 280, y: cy - 120, scene: 'summer', hover: 0 },
+        { name: 'AUTUMN', x: cx - 280, y: cy + 120, scene: 'autumn', hover: 0 },
+        { name: 'WINTER', x: cx + 280, y: cy + 120, scene: 'winter', hover: 0 }
+      ];
+    }
+
+    function drawHub() {
+      noStroke();
+      for (const p of hubParticles) {
+        if (p.color === 'primary') {
+          fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], p.alpha);
+        } else if (p.color === 'secondary') {
+          fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], p.alpha);
+        } else if (p.color === 'trunk') {
+          fill(STYLE.trunk[0], STYLE.trunk[1], STYLE.trunk[2], p.alpha);
+        }
+
+        const x = p.x + sin(frameCount * 0.01 + p.oy) * p.ox;
+        const y = p.y + cos(frameCount * 0.01 + p.ox) * p.oy;
+        circle(x, y, p.size);
+
+        if (p.size > 8) {
+          fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], p.alpha * 0.3);
+          circle(x, y, p.size * 1.8);
+        }
+      }
+
+      // Connections using sampled color
+      stroke(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], STYLE.connectionAlpha);
+      strokeWeight(0.5);
+      for (let i = 0; i < hubParticles.length; i += 15) {
+        for (let j = i + 1; j < Math.min(i + 3, hubParticles.length); j++) {
+          const d = dist(hubParticles[i].x, hubParticles[i].y, hubParticles[j].x, hubParticles[j].y);
+          if (d < 120) {
+            line(hubParticles[i].x, hubParticles[i].y, hubParticles[j].x, hubParticles[j].y);
+          }
+        }
+      }
+
+      // Portals
+      for (const portal of portals) {
+        const mx = mouseX || 0;
+        const my = mouseY || 0;
+        const d = dist(mx, my, portal.x, portal.y);
+        portal.hover = lerp(portal.hover, d < 60 ? 1 : 0, 0.1);
+
+        push();
+        translate(portal.x, portal.y);
+
+        if (portal.hover > 0.1) {
+          noStroke();
+          fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], portal.hover * STYLE.glowAlpha);
+          circle(0, 0, 100 + portal.hover * 20);
+        }
+
+        noFill();
+        stroke(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 120 + portal.hover * 80);
+        strokeWeight(1 + portal.hover * 0.5);
+        circle(0, 0, 50 + portal.hover * 8);
+
+        noStroke();
+        fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], 180 + portal.hover * 75);
+        textAlign(CENTER, CENTER);
+        textSize(11 + portal.hover * 2);
+        text(portal.name, 0, 0);
+
+        pop();
+      }
+
+      fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 160);
+      textAlign(CENTER);
+      textSize(14);
+      text('PARTICLE CLOUD HUB', width / 2, 40);
+    }
+
+    function mousePressed() {
+      if (currentScene === 'hub') {
+        for (const portal of portals) {
+          const d = dist(mouseX, mouseY, portal.x, portal.y);
+          if (d < 60) {
+            currentScene = portal.scene;
+            if (currentScene === 'spring') initSpring();
+            else if (currentScene === 'summer') initSummer();
+            else if (currentScene === 'autumn') initAutumn();
+            else if (currentScene === 'winter') initWinter();
+            return;
+          }
+        }
+      } else {
+        if (mouseX > 30 && mouseX < 120 && mouseY > 30 && mouseY < 60) {
+          currentScene = 'hub';
+          initHub();
+        }
+      }
+    }
+
+    // ========================================
+    // SPRING ROOM
+    // ========================================
+    function initSpring() {
+      springPetals = [];
+      windVector = { x: 0, y: 0 };
+
+      springTree = {
+        trunk: null,      // 树干形状（vertices）
+        branches: [],     // 树枝（line segments）
+        canopy: []        // 树冠花朵（particles）
+      };
+
+      const cx = width * 0.5;
+      const cy = height * 0.55;  // 树干底部
+
+      // ========================================
+      // A) 树干：用 vertices 画自然形状（不是圆堆叠）
+      // ========================================
+      springTree.trunk = {
+        x: cx,
+        baseY: cy,
+        topY: height * 0.38,
+        baseWidth: 45,
+        topWidth: 18,
+        color: STYLE.trunk
+      };
+
+      // ========================================
+      // B) 树枝：从树干顶部向外延伸（3-5条主枝）
+      // ========================================
+      const branchCount = 5;
+      const branchStartY = springTree.trunk.topY + 20;
+
+      for (let i = 0; i < branchCount; i++) {
+        const angle = map(i, 0, branchCount - 1, -0.6, 0.6);  // -35° to +35°
+        const branchLength = random(120, 180);
+        const endX = cx + sin(angle) * branchLength;
+        const endY = branchStartY - cos(angle) * branchLength * 0.6;
+
+        springTree.branches.push({
+          x1: cx,
+          y1: branchStartY,
+          x2: endX,
+          y2: endY,
+          thickness: lerp(12, 4, i / branchCount)
+        });
+      }
+
+      // ========================================
+      // C) 树冠：围绕枝条末端生成花朵簇（严格限制区域）
+      // ========================================
+      // 为每个树枝末端创建一个花簇
+      for (const branch of springTree.branches) {
+        const clusterX = branch.x2;
+        const clusterY = branch.y2;
+        const clusterRadius = random(80, 120);
+
+        // 每个簇生成 200-300 个花朵粒子
+        const particleCount = int(random(200, 300));
+        for (let i = 0; i < particleCount; i++) {
+          const a = random(TWO_PI);
+          const r = pow(random(), 0.55) * clusterRadius;
+          const px = clusterX + cos(a) * r;
+          const py = clusterY + sin(a) * r * 0.7;
+
+          // ✅ 严格限制：不能超过画面上方 12%
+          if (py < height * 0.12) continue;
+
+          springTree.canopy.push({
+            x: px,
+            y: py,
+            size: random(4, 10),
+            alpha: random(120, 200)
+          });
+        }
+      }
+
+      // 中央树干顶部也加一个大花簇
+      const centerClusterRadius = 140;
+      for (let i = 0; i < 350; i++) {
+        const a = random(TWO_PI);
+        const r = pow(random(), 0.5) * centerClusterRadius;
+        const px = cx + cos(a) * r;
+        const py = branchStartY - 60 + sin(a) * r * 0.6;
+
+        if (py < height * 0.12) continue;
+
+        springTree.canopy.push({
+          x: px,
+          y: py,
+          size: random(5, 11),
+          alpha: random(130, 210)
+        });
+      }
+
+      // ========================================
+      // D) 少量地面落花（树下区域，稀疏）
+      // ========================================
+      for (let i = 0; i < 25; i++) {
+        springTree.canopy.push({
+          x: cx + random(-200, 200),
+          y: height * 0.72 + random(-15, 30),
+          size: random(3, 7),
+          alpha: random(80, 140)
+        });
+      }
+    }
+
+    function drawSpring() {
+      // ========================================
+      // 手势 → 风（逻辑不变）
+      // ========================================
+      let windStrength = 0;
+      if (handData.hands.length > 0) {
+        const hand = handData.hands[0];
+        windVector.x = lerp(windVector.x, hand.velocity.x * 0.12, 0.15);
+        windVector.y = lerp(windVector.y, hand.velocity.y * 0.10, 0.15);
+        windStrength = abs(windVector.x) + abs(windVector.y);
+      } else {
+        windVector.x = lerp(windVector.x, 0, 0.12);
+        windVector.y = lerp(windVector.y, 0, 0.12);
+        windStrength = abs(windVector.x) + abs(windVector.y);
+      }
+
+      // ========================================
+      // 花瓣生成：从树冠附近产生（不是整个屏幕）
+      // ========================================
+      if (windStrength > 1.2 && frameCount % 3 === 0) {
+        const cx = width * 0.5;
+        springPetals.push({
+          x: cx + random(-200, 200),          // 树冠水平范围
+          y: random(height * 0.20, height * 0.45),  // 树冠垂直范围
+          vx: windVector.x * 0.8,
+          vy: 0.6 + random(0.2, 1.1),
+          size: random(3, 7),
+          alpha: random(110, 190),
+          rot: random(TWO_PI),
+          rotSpd: random(-0.06, 0.06)
+        });
+      }
+
+      // 更新花瓣（逻辑不变）
+      for (let i = springPetals.length - 1; i >= 0; i--) {
+        const p = springPetals[i];
+        p.vy += 0.02;
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rot += p.rotSpd;
+        p.vx *= 0.985;
+
+        if (p.y > height + 40 || p.x < -60 || p.x > width + 60) {
+          springPetals.splice(i, 1);
+        }
+      }
+
+      // ========================================
+      // 绘制樱花树
+      // ========================================
+      drawSpringTree();
+
+      // ========================================
+      // 绘制飞舞花瓣
+      // ========================================
+      for (const p of springPetals) {
+        push();
+        translate(p.x, p.y);
+        rotate(p.rot);
+        fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], p.alpha);
+        noStroke();
+        ellipse(0, 0, p.size * 0.9, p.size * 1.5);
+        pop();
+      }
+
+      // ========================================
+      // UI
+      // ========================================
+      drawBackButton();
+      fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('SPRING ENVIRONMENT [STYLED v2.0]', 30, height - 30);
+      textSize(10);
+      text('Move hand to create wind', 30, height - 15);
+
+      if (windStrength > 0.5) {
+        push();
+        stroke(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 100);
+        strokeWeight(2);
+        noFill();
+        const wx = width - 60;
+        const wy = height - 60;
+        line(wx, wy, wx + windVector.x * 3, wy + windVector.y * 3);
+        fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 150);
+        circle(wx + windVector.x * 3, wy + windVector.y * 3, 6);
+        pop();
+      }
+    }
+
+    // ========================================
+    // 绘制樱花树（helper function）
+    // ========================================
+    function drawSpringTree() {
+      const trunk = springTree.trunk;
+
+      // ========================================
+      // 1) 画树干（自然形状，不是圆堆叠）
+      // ========================================
+      noStroke();
+      fill(trunk.color[0], trunk.color[1], trunk.color[2], 200);
+
+      beginShape();
+      // 左侧轮廓（从下到上）
+      vertex(trunk.x - trunk.baseWidth / 2, trunk.baseY);
+      vertex(trunk.x - trunk.topWidth / 2 - 5, trunk.topY);
+      vertex(trunk.x - trunk.topWidth / 2, trunk.topY - 20);
+      // 右侧轮廓（从上到下）
+      vertex(trunk.x + trunk.topWidth / 2, trunk.topY - 20);
+      vertex(trunk.x + trunk.topWidth / 2 + 5, trunk.topY);
+      vertex(trunk.x + trunk.baseWidth / 2, trunk.baseY);
+      endShape(CLOSE);
+
+      // 树干阴影（增加立体感）
+      fill(trunk.color[0] - 20, trunk.color[1] - 20, trunk.color[2] - 20, 100);
+      beginShape();
+      vertex(trunk.x + trunk.baseWidth / 2 - 8, trunk.baseY);
+      vertex(trunk.x + trunk.topWidth / 2 - 2, trunk.topY);
+      vertex(trunk.x + trunk.topWidth / 2 + 5, trunk.topY);
+      vertex(trunk.x + trunk.baseWidth / 2, trunk.baseY);
+      endShape(CLOSE);
+
+      // ========================================
+      // 2) 画树枝（从树干顶部向外延伸）
+      // ========================================
+      for (const branch of springTree.branches) {
+        stroke(trunk.color[0], trunk.color[1], trunk.color[2], 220);
+        strokeWeight(branch.thickness);
+        strokeCap(ROUND);
+        line(branch.x1, branch.y1, branch.x2, branch.y2);
+      }
+
+      // ========================================
+      // 3) 画树冠花朵（粉色粒子，静态不抖）
+      // ========================================
+      noStroke();
+      for (const p of springTree.canopy) {
+        fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], p.alpha);
+        circle(p.x, p.y, p.size);
+      }
+    }
+
+    // ========================================
+    // SUMMER ROOM
+    // ========================================
+    function initSummer() {
+      summerWaves = [];
+      for (let y = 0; y < summerRows; y++) {
+        summerWaves[y] = [];
+        for (let x = 0; x < summerCols; x++) {
+          summerWaves[y][x] = { z: 0, vz: 0 };
+        }
+      }
+    }
+
+    function drawSummer() {
+      let waveAmplitude = 0.5;
+      let handInfluence = null;
+
+      if (handData.hands.length === 2) {
+        const d = handData.hands[0].twoHandDist || handData.hands[1].twoHandDist;
+        waveAmplitude = map(d, 0, width * 0.5, 0.2, 3.0, true);
+      } else if (handData.hands.length === 1) {
+        handInfluence = handData.hands[0].center;
+      }
+
+      const cellW = width / summerCols;
+      const cellH = height / summerRows;
+
+      for (let y = 1; y < summerRows - 1; y++) {
+        for (let x = 1; x < summerCols - 1; x++) {
+          const cell = summerWaves[y][x];
+          const avg = (summerWaves[y-1][x].z + summerWaves[y+1][x].z + summerWaves[y][x-1].z + summerWaves[y][x+1].z) / 4;
+          cell.vz += (avg - cell.z) * 0.1 * waveAmplitude;
+          cell.vz *= 0.95;
+          cell.z += cell.vz;
+
+          if (handInfluence) {
+            const px = x * cellW;
+            const py = y * cellH;
+            const d = dist(px, py, handInfluence.x, handInfluence.y);
+            if (d < 150) {
+              cell.vz += (150 - d) * 0.002;
+            }
+          }
+        }
+      }
+
+      noStroke();
+      for (let y = 0; y < summerRows; y++) {
+        for (let x = 0; x < summerCols; x++) {
+          const cell = summerWaves[y][x];
+          const px = x * cellW;
+          const py = y * cellH;
+
+          // Use pink-based gradient instead of blue
+          const intensity = map(cell.z, -20, 20, 0, 1);
+          const r = lerp(STYLE.dark[0], STYLE.primary[0], intensity);
+          const g = lerp(STYLE.dark[1], STYLE.primary[1], intensity);
+          const b = lerp(STYLE.dark[2], STYLE.primary[2], intensity);
+
+          fill(r, g, b, 180);
+          rect(px, py, cellW, cellH);
+        }
+      }
+
+      fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 15);
+      rect(0, 0, width, height);
+
+      drawBackButton();
+      fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('SUMMER ENVIRONMENT', 30, height - 30);
+      textSize(10);
+      if (handData.hands.length === 2) {
+        text('Two hands: distance controls wave amplitude', 30, height - 15);
+      } else {
+        text('One hand: creates local disturbance', 30, height - 15);
+      }
+    }
+
+    // ========================================
+    // AUTUMN ROOM
+    // ========================================
+    function initAutumn() {
+      autumnApples = [];
+      autumnGroundScatter = [];
+
+      autumnTree = {
+        trunk: { x: width * 0.35, y: height * 0.55 },
+        applePoints: []
+      };
+
+      const cx = autumnTree.trunk.x;
+      const cy = autumnTree.trunk.y;
+
+      for (let i = 0; i < 25; i++) {
+        autumnTree.applePoints.push({
+          x: cx + random(-150, 150),
+          y: cy + random(-120, 40),
+          size: random(18, 28)
+        });
+      }
+
+      for (const pt of autumnTree.applePoints) {
+        autumnApples.push({
+          x: pt.x,
+          y: pt.y,
+          size: pt.size,
+          falling: false,
+          vy: 0,
+          wobble: random(TWO_PI),
+          picked: false
+        });
+      }
+
+      autumnBasket = {
+        x: width * 0.65,
+        y: height * 0.75,
+        width: 140,
+        height: 60,
+        contents: []
+      };
+
+      for (let i = 0; i < 40; i++) {
+        autumnGroundScatter.push({
+          x: random(width * 0.1, width * 0.6),
+          y: height * 0.82 + random(-15, 30),
+          size: random(12, 20),
+          alpha: random(120, 180)
+        });
+      }
+    }
+
+    function drawAutumn() {
+      noStroke();
+      fill(STYLE.trunk[0], STYLE.trunk[1], STYLE.trunk[2], 200);
+      const tx = autumnTree.trunk.x;
+      const ty = autumnTree.trunk.y;
+      rect(tx - 15, ty, 30, 200);
+
+      // Green canopy (autumn specific)
+      fill(140, 180, 100, 160);
+      for (let i = 0; i < 8; i++) {
+        const angle = (TWO_PI / 8) * i;
+        const r = 80 + sin(frameCount * 0.02 + i) * 10;
+        circle(tx + cos(angle) * r * 0.6, ty + sin(angle) * r * 0.5, 70 + sin(frameCount * 0.03 + i * 0.5) * 10);
+      }
+
+      const bx0 = autumnBasket.x - autumnBasket.width / 2;
+      const bx1 = autumnBasket.x + autumnBasket.width / 2;
+      const by0 = autumnBasket.y;
+      const by1 = autumnBasket.y + autumnBasket.height;
+
+      if (handData.hands.length > 0) {
+        const hand = handData.hands[0];
+        if (hand.pinch.isPinching) {
+          for (const apple of autumnApples) {
+            if (apple.picked || apple.falling) continue;
+            const d = dist(hand.center.x, hand.center.y, apple.x, apple.y);
+            if (d < 60) {
+              apple.falling = true;
+            }
+          }
+        }
+      }
+
+      for (const apple of autumnApples) {
+        if (!apple.falling) continue;
+
+        apple.vy += 0.5;
+        apple.y += apple.vy;
+        apple.x += sin(frameCount * 0.05 + apple.wobble) * 0.6;
+
+        const fallProgress = constrain(map(apple.y, ty, by0, 0, 1), 0, 1);
+        const ax = (autumnBasket.x - apple.x) * (0.02 + 0.1 * fallProgress);
+        apple.x += ax;
+
+        if (apple.y >= by0 && apple.y <= by1 && apple.x >= bx0 && apple.x <= bx1) {
+          apple.picked = true;
+          apple.falling = false;
+          apple.y = by0 + autumnBasket.height * 0.4;
+          autumnBasket.contents.push(apple);
+        }
+
+        if (apple.y > height + 50) {
+          apple.falling = false;
+        }
+      }
+
+      for (const apple of autumnApples) {
+        if (apple.picked && apple.y < -200) continue;
+
+        const x = apple.falling ? apple.x : apple.x + sin(frameCount * 0.03 + apple.wobble) * 0.6;
+
+        // Use apple image if loaded, otherwise fallback to circles
+        if (appleImg && appleImg.width > 0) {
+          push();
+          imageMode(CENTER);
+          // Draw shadow
+          tint(140, 30, 30, 60);
+          image(appleImg, x + 2, apple.y + 2, apple.size, apple.size);
+          // Draw apple
+          noTint();
+          image(appleImg, x, apple.y, apple.size, apple.size);
+          pop();
+        } else {
+          // Fallback to circle rendering
+          fill(140, 30, 30, 60);
+          circle(x + 2, apple.y + 2, apple.size * 0.95);
+
+          fill(220, 60, 50, 220);
+          circle(x, apple.y, apple.size);
+
+          fill(255, 180, 170, 140);
+          circle(x - apple.size * 0.2, apple.y - apple.size * 0.2, apple.size * 0.35);
+        }
+      }
+
+      fill(160, 120, 80, 200);
+      rect(bx0, by0, autumnBasket.width, autumnBasket.height, 5);
+      fill(140, 100, 60, 150);
+      rect(bx0 + 10, by0 + 10, autumnBasket.width - 20, autumnBasket.height - 10, 5);
+
+      // Ground scatter apples
+      for (const s of autumnGroundScatter) {
+        if (appleImg && appleImg.width > 0) {
+          push();
+          imageMode(CENTER);
+          tint(255, 255, 255, s.alpha);
+          image(appleImg, s.x, s.y, s.size, s.size);
+          pop();
+        } else {
+          // Fallback to circle rendering
+          fill(220, 60, 50, s.alpha);
+          circle(s.x, s.y, s.size);
+        }
+      }
+
+      drawBackButton();
+      fill(255, 180, 150, 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('AUTUMN ENVIRONMENT', 30, height - 30);
+      textSize(10);
+      text('Pinch near apple to pick → falls into basket', 30, height - 15);
+
+      if (handData.hands.length > 0) {
+        const hand = handData.hands[0];
+        if (hand.pinch.isPinching) {
+          noFill();
+          stroke(255, 180, 150, 180);
+          strokeWeight(2);
+          circle(hand.center.x, hand.center.y, 50);
+        }
+      }
+    }
+
+    // ========================================
+    // WINTER ROOM
+    // ========================================
+    function initWinter() {
+      winterSnow = [];
+      winterTraces = [];
+
+      for (let i = 0; i < 200; i++) {
+        winterSnow.push({
+          x: random(width),
+          y: random(height),
+          vx: random(-0.3, 0.3),
+          vy: random(0.5, 1.2),
+          size: random(2, 6)
+        });
+      }
+    }
+
+    function drawWinter() {
+      for (const snow of winterSnow) {
+        snow.x += snow.vx;
+        snow.y += snow.vy;
+
+        if (snow.y > height) {
+          snow.y = -10;
+          snow.x = random(width);
+        }
+        if (snow.x < 0) snow.x = width;
+        if (snow.x > width) snow.x = 0;
+      }
+
+      if (handData.hands.length > 0) {
+        for (const hand of handData.hands) {
+          if (hand.velocity.speed > 2) {
+            const intensity = min(1, hand.velocity.speed / 20);
+            for (let i = 0; i < floor(intensity * 8); i++) {
+              winterTraces.push({
+                x: hand.center.x + random(-15, 15),
+                y: hand.center.y + random(-15, 15),
+                life: intensity,
+                size: random(3, 8)
+              });
+            }
+          }
+        }
+      }
+
+      for (let i = winterTraces.length - 1; i >= 0; i--) {
+        winterTraces[i].life -= 0.015;
+        if (winterTraces[i].life <= 0) {
+          winterTraces.splice(i, 1);
+        }
+      }
+
+      noStroke();
+      // Use pink-tinted traces instead of blue
+      for (const trace of winterTraces) {
+        fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], trace.life * 200);
+        circle(trace.x, trace.y, trace.size * trace.life);
+      }
+
+      for (const snow of winterSnow) {
+        fill(STYLE.highlight[0], STYLE.highlight[1], STYLE.highlight[2], 220);
+        circle(snow.x, snow.y, snow.size);
+      }
+
+      fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 10);
+      rect(0, 0, width, height);
+
+      drawBackButton();
+      fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('WINTER ENVIRONMENT', 30, height - 30);
+      textSize(10);
+      text('Move hand to create snow traces', 30, height - 15);
+    }
+
+    // ========================================
+    // UI HELPERS
+    // ========================================
+    function drawBackButton() {
+      push();
+      const hover = mouseX > 30 && mouseX < 120 && mouseY > 30 && mouseY < 60 ? 1 : 0;
+
+      if (hover > 0.5) {
+        noStroke();
+        fill(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 40);
+        rect(25, 25, 100, 40, 8);
+      }
+
+      noFill();
+      stroke(STYLE.primary[0], STYLE.primary[1], STYLE.primary[2], 120 + hover * 100);
+      strokeWeight(1 + hover * 0.5);
+      rect(30, 30, 90, 30, 6);
+
+      noStroke();
+      fill(STYLE.secondary[0], STYLE.secondary[1], STYLE.secondary[2], 180 + hover * 75);
+      textAlign(CENTER, CENTER);
+      textSize(11);
+      text('← BACK', 75, 45);
+
+      pop();
+    }
+  </script>
+</body>
+</html>
