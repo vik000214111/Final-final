@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Particle Cloud Hub - Spring1 Style</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      overflow: hidden;
+      background: #000;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: #fff;
+    }
+    #canvasContainer {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    /* Camera preview box */
+    #cameraBox {
+      position: fixed;
+      left: 20px;
+      bottom: 20px;
+      width: 200px;
+      height: 150px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 0 20px rgba(255, 200, 230, 0.15);
+      z-index: 1000;
+    }
+    #camVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror */
+      opacity: 0.85;
+    }
+    #camOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    #camLabel {
+      position: absolute;
+      top: 6px;
+      left: 8px;
+      font-size: 9px;
+      letter-spacing: 1.5px;
+      color: rgba(255, 200, 230, 0.8);
+      text-transform: uppercase;
+      font-weight: 300;
+      text-shadow: 0 0 8px rgba(255, 200, 230, 0.4);
+    }
+  </style>
+</head>
+<body>
+  <div id="canvasContainer"></div>
+
+  <!-- Camera preview box -->
+  <div id="cameraBox">
+    <video id="camVideo" autoplay playsinline></video>
+    <canvas id="camOverlay"></canvas>
+    <div id="camLabel">CAM • HANDS</div>
+  </div>
+
+  <!-- p5.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+
+  <!-- MediaPipe Hands -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+  <script>
+    // ========================================
+    // GLOBAL STATE
+    // ========================================
+    let currentScene = 'hub'; // 'hub', 'spring', 'summer', 'autumn', 'winter'
+    let handData = { hands: [] };
+
+    // Camera preview elements
+    let camVideoEl, camOverlayEl, camCtx;
+
+    // Hub state
+    let hubParticles = [];
+    let hubTree = null;
+    let portals = [];
+
+    // Room states
+    let springPetals = [];
+    let springTree = null;
+    let windVector = { x: 0, y: 0 };
+
+    let summerWaves = null;
+    let summerCols = 80;
+    let summerRows = 60;
+
+    let autumnApples = [];
+    let autumnTree = null;
+    let autumnBasket = null;
+    let autumnGroundScatter = [];
+
+    let winterSnow = [];
+    let winterTraces = [];
+
+    // ========================================
+    // P5.JS SETUP
+    // ========================================
+    function setup() {
+      let canvas = createCanvas(windowWidth, windowHeight);
+      canvas.parent('canvasContainer');
+
+      // Initialize MediaPipe Hands
+      initMediaPipeHands();
+
+      // Initialize camera preview
+      initCameraPreview();
+
+      // Initialize hub
+      initHub();
+    }
+
+    function draw() {
+      background(0); // Pure black background (spring1 style)
+
+      if (currentScene === 'hub') {
+        drawHub();
+      } else if (currentScene === 'spring') {
+        drawSpring();
+      } else if (currentScene === 'summer') {
+        drawSummer();
+      } else if (currentScene === 'autumn') {
+        drawAutumn();
+      } else if (currentScene === 'winter') {
+        drawWinter();
+      }
+
+      // Update camera preview
+      drawHandPreview();
+    }
+
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      // Re-initialize current scene
+      if (currentScene === 'hub') initHub();
+      else if (currentScene === 'spring') initSpring();
+      else if (currentScene === 'summer') initSummer();
+      else if (currentScene === 'autumn') initAutumn();
+      else if (currentScene === 'winter') initWinter();
+    }
+
+    // ========================================
+    // MEDIAPIPE HANDS
+    // ========================================
+    function initMediaPipeHands() {
+      const videoEl = document.getElementById('camVideo');
+
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+      });
+
+      hands.onResults(onHandResults);
+
+      const camera = new Camera(videoEl, {
+        onFrame: async () => {
+          await hands.send({ image: videoEl });
+        },
+        width: 640,
+        height: 480
+      });
+
+      camera.start();
+
+      // Autoplay fallback
+      videoEl.onloadedmetadata = () => {
+        videoEl.play().catch(() => {
+          document.addEventListener('pointerdown', () => {
+            videoEl.play();
+          }, { once: true });
+        });
+      };
+    }
+
+    function onHandResults(results) {
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        handData.hands = [];
+        return;
+      }
+
+      const vw = document.getElementById('camVideo').videoWidth || 640;
+      const vh = document.getElementById('camVideo').videoHeight || 480;
+
+      handData.hands = results.multiHandLandmarks.map((landmarks, idx) => {
+        // Canvas coordinates (mirrored)
+        const keypointsPx = landmarks.map(lm => ({
+          x: (1 - lm.x) * width, // mirror
+          y: lm.y * height
+        }));
+
+        // Camera coordinates (for preview)
+        const keypointsCamPx = landmarks.map(lm => ({
+          x: lm.x * vw,
+          y: lm.y * vh
+        }));
+
+        // Center point
+        const center = {
+          x: keypointsPx.reduce((sum, p) => sum + p.x, 0) / 21,
+          y: keypointsPx.reduce((sum, p) => sum + p.y, 0) / 21
+        };
+
+        // Velocity (for wind/traces)
+        const prevCenter = handData.hands[idx]?.center || center;
+        const velocity = {
+          x: center.x - prevCenter.x,
+          y: center.y - prevCenter.y,
+          speed: dist(center.x, center.y, prevCenter.x, prevCenter.y)
+        };
+
+        // Pinch detection
+        const thumb = keypointsPx[4];
+        const index = keypointsPx[8];
+        const pinchDist = dist(thumb.x, thumb.y, index.x, index.y);
+        const isPinching = pinchDist < 40;
+
+        // Two-hand distance (for summer waves)
+        let twoHandDist = 0;
+        if (handData.hands.length === 2 && idx === 1) {
+          twoHandDist = dist(center.x, center.y, handData.hands[0].center.x, handData.hands[0].center.y);
+        }
+
+        return {
+          keypointsPx,
+          keypointsCamPx,
+          center,
+          velocity,
+          pinch: { isPinching, distance: pinchDist },
+          twoHandDist
+        };
+      });
+    }
+
+    // ========================================
+    // CAMERA PREVIEW
+    // ========================================
+    function initCameraPreview() {
+      camVideoEl = document.getElementById('camVideo');
+      camOverlayEl = document.getElementById('camOverlay');
+      camCtx = camOverlayEl.getContext('2d');
+
+      function syncCanvas() {
+        const w = camOverlayEl.clientWidth;
+        const h = camOverlayEl.clientHeight;
+        camOverlayEl.width = Math.floor(w * devicePixelRatio);
+        camOverlayEl.height = Math.floor(h * devicePixelRatio);
+        camCtx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+      }
+      syncCanvas();
+      window.addEventListener('resize', syncCanvas);
+    }
+
+    function drawHandPreview() {
+      if (!camCtx || !camOverlayEl) return;
+
+      const W = camOverlayEl.clientWidth;
+      const H = camOverlayEl.clientHeight;
+      camCtx.clearRect(0, 0, W, H);
+
+      if (!handData.hands || handData.hands.length === 0) return;
+
+      const vw = document.getElementById('camVideo').videoWidth || 640;
+      const vh = document.getElementById('camVideo').videoHeight || 480;
+
+      const edges = [
+        [0,1],[1,2],[2,3],[3,4],
+        [0,5],[5,6],[6,7],[7,8],
+        [0,9],[9,10],[10,11],[11,12],
+        [0,13],[13,14],[14,15],[15,16],
+        [0,17],[17,18],[18,19],[19,20],
+        [5,9],[9,13],[13,17]
+      ];
+
+      function mapPt(p) {
+        let x = (p.x / vw) * W;
+        let y = (p.y / vh) * H;
+        x = W - x; // mirror
+        return { x, y };
+      }
+
+      for (const hand of handData.hands) {
+        const kp = hand.keypointsCamPx;
+        if (!kp || kp.length !== 21) continue;
+
+        // Draw skeleton
+        camCtx.strokeStyle = "rgba(255, 200, 230, 0.7)";
+        camCtx.lineWidth = 1.5;
+        camCtx.beginPath();
+        for (const [a, b] of edges) {
+          const A = mapPt(kp[a]);
+          const B = mapPt(kp[b]);
+          camCtx.moveTo(A.x, A.y);
+          camCtx.lineTo(B.x, B.y);
+        }
+        camCtx.stroke();
+
+        // Draw keypoints
+        camCtx.fillStyle = "rgba(255, 220, 240, 0.9)";
+        for (let i = 0; i < 21; i++) {
+          const P = mapPt(kp[i]);
+          camCtx.beginPath();
+          camCtx.arc(P.x, P.y, 2.5, 0, Math.PI * 2);
+          camCtx.fill();
+        }
+      }
+    }
+
+    // ========================================
+    // HUB SCENE
+    // ========================================
+    function initHub() {
+      // Create central particle cloud (like spring1 cherry tree structure)
+      hubParticles = [];
+      const cx = width / 2;
+      const cy = height / 2;
+
+      // Main cloud clusters (like spring1 cherry blossoms)
+      for (let i = 0; i < 8; i++) {
+        const angle = (TWO_PI / 8) * i;
+        const clusterX = cx + cos(angle) * random(80, 180);
+        const clusterY = cy + sin(angle) * random(60, 140);
+
+        // Create cluster
+        for (let j = 0; j < 80; j++) {
+          const a = random(TWO_PI);
+          const r = pow(random(), 0.6) * random(40, 90);
+          hubParticles.push({
+            x: clusterX + cos(a) * r,
+            y: clusterY + sin(a) * r * 0.8,
+            size: random(3, 12),
+            alpha: random(80, 180),
+            color: random(['pink', 'white']),
+            ox: random(-1, 1), // offset for subtle movement
+            oy: random(-1, 1)
+          });
+        }
+      }
+
+      // Central trunk particles (darker, smaller)
+      for (let i = 0; i < 50; i++) {
+        hubParticles.push({
+          x: cx + random(-20, 20),
+          y: cy + random(-40, 80),
+          size: random(2, 6),
+          alpha: random(100, 200),
+          color: 'brown',
+          ox: 0,
+          oy: 0
+        });
+      }
+
+      // Ground scatter
+      for (let i = 0; i < 120; i++) {
+        hubParticles.push({
+          x: cx + random(-300, 300),
+          y: height * 0.75 + random(-20, 40),
+          size: random(2, 6),
+          alpha: random(60, 140),
+          color: 'pink',
+          ox: random(-0.5, 0.5),
+          oy: 0
+        });
+      }
+
+      // Portals (positioned around the cloud)
+      portals = [
+        { name: 'SPRING', x: cx - 280, y: cy - 120, scene: 'spring', hover: 0 },
+        { name: 'SUMMER', x: cx + 280, y: cy - 120, scene: 'summer', hover: 0 },
+        { name: 'AUTUMN', x: cx - 280, y: cy + 120, scene: 'autumn', hover: 0 },
+        { name: 'WINTER', x: cx + 280, y: cy + 120, scene: 'winter', hover: 0 }
+      ];
+    }
+
+    function drawHub() {
+      // Draw particles
+      noStroke();
+      for (const p of hubParticles) {
+        if (p.color === 'pink') {
+          fill(255, 210, 230, p.alpha);
+        } else if (p.color === 'white') {
+          fill(255, 245, 250, p.alpha);
+        } else {
+          fill(139, 125, 107, p.alpha);
+        }
+
+        const x = p.x + sin(frameCount * 0.01 + p.oy) * p.ox;
+        const y = p.y + cos(frameCount * 0.01 + p.ox) * p.oy;
+        circle(x, y, p.size);
+
+        // Glow for larger particles
+        if (p.size > 8) {
+          fill(255, 210, 230, p.alpha * 0.3);
+          circle(x, y, p.size * 1.8);
+        }
+      }
+
+      // Draw sparse connections
+      stroke(255, 200, 230, 20);
+      strokeWeight(0.5);
+      for (let i = 0; i < hubParticles.length; i += 15) {
+        for (let j = i + 1; j < Math.min(i + 3, hubParticles.length); j++) {
+          const d = dist(hubParticles[i].x, hubParticles[i].y, hubParticles[j].x, hubParticles[j].y);
+          if (d < 120) {
+            line(hubParticles[i].x, hubParticles[i].y, hubParticles[j].x, hubParticles[j].y);
+          }
+        }
+      }
+
+      // Draw portals
+      for (const portal of portals) {
+        const mx = mouseX || 0;
+        const my = mouseY || 0;
+        const d = dist(mx, my, portal.x, portal.y);
+        portal.hover = lerp(portal.hover, d < 60 ? 1 : 0, 0.1);
+
+        push();
+        translate(portal.x, portal.y);
+
+        // Glow
+        if (portal.hover > 0.1) {
+          noStroke();
+          fill(255, 200, 230, portal.hover * 30);
+          circle(0, 0, 100 + portal.hover * 20);
+        }
+
+        // Border
+        noFill();
+        stroke(255, 200, 230, 120 + portal.hover * 80);
+        strokeWeight(1 + portal.hover * 0.5);
+        circle(0, 0, 50 + portal.hover * 8);
+
+        // Label
+        noStroke();
+        fill(255, 220, 240, 180 + portal.hover * 75);
+        textAlign(CENTER, CENTER);
+        textSize(11 + portal.hover * 2);
+        text(portal.name, 0, 0);
+
+        pop();
+      }
+
+      // Title
+      fill(255, 200, 230, 160);
+      textAlign(CENTER);
+      textSize(14);
+      text('PARTICLE CLOUD HUB', width / 2, 40);
+    }
+
+    function mousePressed() {
+      if (currentScene === 'hub') {
+        for (const portal of portals) {
+          const d = dist(mouseX, mouseY, portal.x, portal.y);
+          if (d < 60) {
+            currentScene = portal.scene;
+            if (currentScene === 'spring') initSpring();
+            else if (currentScene === 'summer') initSummer();
+            else if (currentScene === 'autumn') initAutumn();
+            else if (currentScene === 'winter') initWinter();
+            return;
+          }
+        }
+      } else {
+        // Check Back button
+        if (mouseX > 30 && mouseX < 120 && mouseY > 30 && mouseY < 60) {
+          currentScene = 'hub';
+          initHub();
+        }
+      }
+    }
+
+    // ========================================
+    // SPRING ROOM
+    // ========================================
+    function initSpring() {
+      springPetals = [];
+      windVector = { x: 0, y: 0 };
+
+      // Pre-generate tree structure (spring1 style)
+      springTree = {
+        trunk: [],
+        canopy: []
+      };
+
+      const cx = width * 0.35;
+      const cy = height * 0.55;
+
+      // Trunk particles
+      for (let i = 0; i < 40; i++) {
+        springTree.trunk.push({
+          x: cx + random(-15, 15),
+          y: cy + random(-30, 60),
+          size: random(3, 8),
+          alpha: random(120, 200)
+        });
+      }
+
+      // Canopy clusters (like spring1)
+      for (let k = 0; k < 6; k++) {
+        const ox = random(-120, 120);
+        const oy = random(-100, 60);
+        for (let i = 0; i < 200; i++) {
+          const a = random(TWO_PI);
+          const r = pow(random(), 0.6) * random(50, 100);
+          springTree.canopy.push({
+            x: cx + ox + cos(a) * r,
+            y: cy + oy + sin(a) * r * 0.7,
+            size: random(4, 14),
+            alpha: random(100, 200),
+            ox: random(-1, 1),
+            oy: random(-1, 1)
+          });
+        }
+      }
+
+      // Ground scatter
+      for (let i = 0; i < 150; i++) {
+        springTree.canopy.push({
+          x: random(width),
+          y: height * 0.8 + random(-20, 40),
+          size: random(2, 6),
+          alpha: random(80, 150),
+          ox: 0,
+          oy: 0
+        });
+      }
+    }
+
+    function drawSpring() {
+      // Update wind based on hand movement
+      if (handData.hands.length > 0) {
+        const hand = handData.hands[0];
+        windVector.x = lerp(windVector.x, hand.velocity.x * 0.15, 0.1);
+        windVector.y = lerp(windVector.y, hand.velocity.y * 0.15, 0.1);
+      } else {
+        windVector.x = lerp(windVector.x, 0, 0.05);
+        windVector.y = lerp(windVector.y, 0, 0.05);
+      }
+
+      // Spawn petals when wind is strong
+      if (abs(windVector.x) + abs(windVector.y) > 1 && frameCount % 3 === 0) {
+        springPetals.push({
+          x: random(width),
+          y: random(-50, height * 0.3),
+          vx: windVector.x,
+          vy: random(0.5, 1.5),
+          size: random(3, 7),
+          alpha: random(140, 220),
+          wobble: random(TWO_PI)
+        });
+      }
+
+      // Update petals
+      for (let i = springPetals.length - 1; i >= 0; i--) {
+        const p = springPetals[i];
+        p.x += p.vx + windVector.x;
+        p.y += p.vy + windVector.y * 0.5;
+        p.vx *= 0.98; // friction
+        p.wobble += 0.05;
+
+        // Remove if off screen
+        if (p.y > height + 50 || p.x < -50 || p.x > width + 50) {
+          springPetals.splice(i, 1);
+        }
+      }
+
+      // Draw tree (pre-generated, no flicker)
+      noStroke();
+      for (const p of springTree.trunk) {
+        fill(139, 125, 107, p.alpha);
+        circle(p.x, p.y, p.size);
+      }
+
+      for (const p of springTree.canopy) {
+        fill(255, 210, 230, p.alpha);
+        const x = p.x + sin(frameCount * 0.008 + p.oy) * p.ox;
+        const y = p.y + cos(frameCount * 0.008 + p.ox) * p.oy;
+        circle(x, y, p.size);
+
+        if (p.size > 10) {
+          fill(255, 230, 245, p.alpha * 0.4);
+          circle(x, y, p.size * 1.6);
+        }
+      }
+
+      // Draw flying petals
+      for (const p of springPetals) {
+        fill(255, 220, 235, p.alpha);
+        const x = p.x + sin(p.wobble) * 2;
+        circle(x, p.y, p.size);
+      }
+
+      // UI
+      drawBackButton();
+      fill(255, 200, 230, 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('SPRING ENVIRONMENT', 30, height - 30);
+      textSize(10);
+      text('Move hand to create wind', 30, height - 15);
+
+      // Wind indicator
+      if (abs(windVector.x) + abs(windVector.y) > 0.5) {
+        push();
+        stroke(255, 200, 230, 100);
+        strokeWeight(2);
+        noFill();
+        const wx = width - 60;
+        const wy = height - 60;
+        line(wx, wy, wx + windVector.x * 3, wy + windVector.y * 3);
+        fill(255, 200, 230, 150);
+        circle(wx + windVector.x * 3, wy + windVector.y * 3, 6);
+        pop();
+      }
+    }
+
+    // ========================================
+    // SUMMER ROOM
+    // ========================================
+    function initSummer() {
+      summerWaves = [];
+      for (let y = 0; y < summerRows; y++) {
+        summerWaves[y] = [];
+        for (let x = 0; x < summerCols; x++) {
+          summerWaves[y][x] = {
+            z: 0,
+            vz: 0
+          };
+        }
+      }
+    }
+
+    function drawSummer() {
+      // Get hand influence
+      let waveAmplitude = 0.5;
+      let handInfluence = null;
+
+      if (handData.hands.length === 2) {
+        // Two hands: distance controls amplitude
+        const d = handData.hands[0].twoHandDist || handData.hands[1].twoHandDist;
+        waveAmplitude = map(d, 0, width * 0.5, 0.2, 3.0, true);
+      } else if (handData.hands.length === 1) {
+        // One hand: creates local disturbance
+        handInfluence = handData.hands[0].center;
+      }
+
+      // Update wave field
+      const cellW = width / summerCols;
+      const cellH = height / summerRows;
+
+      for (let y = 1; y < summerRows - 1; y++) {
+        for (let x = 1; x < summerCols - 1; x++) {
+          const cell = summerWaves[y][x];
+
+          // Wave equation (neighbors average)
+          const avg = (
+            summerWaves[y-1][x].z +
+            summerWaves[y+1][x].z +
+            summerWaves[y][x-1].z +
+            summerWaves[y][x+1].z
+          ) / 4;
+
+          cell.vz += (avg - cell.z) * 0.1 * waveAmplitude;
+          cell.vz *= 0.95; // damping
+          cell.z += cell.vz;
+
+          // Hand disturbance
+          if (handInfluence) {
+            const px = x * cellW;
+            const py = y * cellH;
+            const d = dist(px, py, handInfluence.x, handInfluence.y);
+            if (d < 150) {
+              cell.vz += (150 - d) * 0.002;
+            }
+          }
+        }
+      }
+
+      // Draw wave field
+      noStroke();
+      for (let y = 0; y < summerRows; y++) {
+        for (let x = 0; x < summerCols; x++) {
+          const cell = summerWaves[y][x];
+          const px = x * cellW;
+          const py = y * cellH;
+          const brightness = map(cell.z, -20, 20, 0, 255);
+
+          fill(100, 150, brightness, 180);
+          rect(px, py, cellW, cellH);
+        }
+      }
+
+      // Overlay glow
+      fill(180, 220, 255, 15);
+      rect(0, 0, width, height);
+
+      // UI
+      drawBackButton();
+      fill(180, 220, 255, 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('SUMMER ENVIRONMENT', 30, height - 30);
+      textSize(10);
+      if (handData.hands.length === 2) {
+        text('Two hands: distance controls wave amplitude', 30, height - 15);
+      } else {
+        text('One hand: creates local disturbance', 30, height - 15);
+      }
+    }
+
+    // ========================================
+    // AUTUMN ROOM
+    // ========================================
+    function initAutumn() {
+      autumnApples = [];
+      autumnGroundScatter = [];
+
+      // Tree structure (simplified)
+      autumnTree = {
+        trunk: { x: width * 0.35, y: height * 0.55 },
+        applePoints: []
+      };
+
+      // Generate apple hanging points
+      const cx = autumnTree.trunk.x;
+      const cy = autumnTree.trunk.y;
+
+      for (let i = 0; i < 25; i++) {
+        autumnTree.applePoints.push({
+          x: cx + random(-150, 150),
+          y: cy + random(-120, 40),
+          size: random(18, 28)
+        });
+      }
+
+      // Create apples
+      for (const pt of autumnTree.applePoints) {
+        autumnApples.push({
+          x: pt.x,
+          y: pt.y,
+          size: pt.size,
+          falling: false,
+          vy: 0,
+          wobble: random(TWO_PI),
+          picked: false
+        });
+      }
+
+      // Basket
+      autumnBasket = {
+        x: width * 0.65,
+        y: height * 0.75,
+        width: 140,
+        height: 60,
+        contents: []
+      };
+
+      // Ground scatter (pre-generated)
+      for (let i = 0; i < 40; i++) {
+        autumnGroundScatter.push({
+          x: random(width * 0.1, width * 0.6),
+          y: height * 0.82 + random(-15, 30),
+          size: random(12, 20),
+          alpha: random(120, 180)
+        });
+      }
+    }
+
+    function drawAutumn() {
+      // Draw simple tree
+      noStroke();
+      fill(139, 125, 107, 200);
+      const tx = autumnTree.trunk.x;
+      const ty = autumnTree.trunk.y;
+      rect(tx - 15, ty, 30, 200);
+
+      // Green canopy
+      fill(140, 180, 100, 160);
+      for (let i = 0; i < 8; i++) {
+        const angle = (TWO_PI / 8) * i;
+        const r = random(80, 120);
+        circle(tx + cos(angle) * r * 0.6, ty + sin(angle) * r * 0.5, random(60, 100));
+      }
+
+      // Update apples
+      const bx0 = autumnBasket.x - autumnBasket.width / 2;
+      const bx1 = autumnBasket.x + autumnBasket.width / 2;
+      const by0 = autumnBasket.y;
+      const by1 = autumnBasket.y + autumnBasket.height;
+
+      // Pinch to pick
+      if (handData.hands.length > 0) {
+        const hand = handData.hands[0];
+        if (hand.pinch.isPinching) {
+          for (const apple of autumnApples) {
+            if (apple.picked || apple.falling) continue;
+            const d = dist(hand.center.x, hand.center.y, apple.x, apple.y);
+            if (d < 60) {
+              apple.falling = true;
+            }
+          }
+        }
+      }
+
+      // Update falling apples
+      for (const apple of autumnApples) {
+        if (!apple.falling) continue;
+
+        apple.vy += 0.5;
+        apple.y += apple.vy;
+        apple.x += sin(frameCount * 0.05 + apple.wobble) * 0.6;
+
+        // Attraction to basket
+        const fallProgress = constrain(map(apple.y, ty, by0, 0, 1), 0, 1);
+        const ax = (autumnBasket.x - apple.x) * (0.02 + 0.1 * fallProgress);
+        apple.x += ax;
+
+        // Check if in basket
+        if (apple.y >= by0 && apple.y <= by1 && apple.x >= bx0 && apple.x <= bx1) {
+          apple.picked = true;
+          apple.falling = false;
+          apple.y = by0 + autumnBasket.height * 0.4;
+          autumnBasket.contents.push(apple);
+        }
+
+        // Off screen
+        if (apple.y > height + 50) {
+          apple.falling = false;
+        }
+      }
+
+      // Draw apples
+      for (const apple of autumnApples) {
+        if (apple.picked && apple.y < -200) continue;
+
+        const x = apple.falling ? apple.x : apple.x + sin(frameCount * 0.03 + apple.wobble) * 0.6;
+
+        // Shadow
+        fill(140, 30, 30, 60);
+        circle(x + 2, apple.y + 2, apple.size * 0.95);
+
+        // Apple
+        fill(220, 60, 50, 220);
+        circle(x, apple.y, apple.size);
+
+        // Highlight
+        fill(255, 180, 170, 140);
+        circle(x - apple.size * 0.2, apple.y - apple.size * 0.2, apple.size * 0.35);
+      }
+
+      // Draw basket
+      fill(160, 120, 80, 200);
+      rect(bx0, by0, autumnBasket.width, autumnBasket.height, 5);
+      fill(140, 100, 60, 150);
+      rect(bx0 + 10, by0 + 10, autumnBasket.width - 20, autumnBasket.height - 10, 5);
+
+      // Ground scatter
+      for (const s of autumnGroundScatter) {
+        fill(220, 60, 50, s.alpha);
+        circle(s.x, s.y, s.size);
+      }
+
+      // UI
+      drawBackButton();
+      fill(255, 200, 180, 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('AUTUMN ENVIRONMENT', 30, height - 30);
+      textSize(10);
+      text('Pinch near apple to pick → falls into basket', 30, height - 15);
+
+      // Pinch indicator
+      if (handData.hands.length > 0) {
+        const hand = handData.hands[0];
+        if (hand.pinch.isPinching) {
+          noFill();
+          stroke(255, 200, 180, 180);
+          strokeWeight(2);
+          circle(hand.center.x, hand.center.y, 50);
+        }
+      }
+    }
+
+    // ========================================
+    // WINTER ROOM
+    // ========================================
+    function initWinter() {
+      winterSnow = [];
+      winterTraces = [];
+
+      for (let i = 0; i < 200; i++) {
+        winterSnow.push({
+          x: random(width),
+          y: random(height),
+          vx: random(-0.3, 0.3),
+          vy: random(0.5, 1.2),
+          size: random(2, 6)
+        });
+      }
+    }
+
+    function drawWinter() {
+      // Update snow
+      for (const snow of winterSnow) {
+        snow.x += snow.vx;
+        snow.y += snow.vy;
+
+        if (snow.y > height) {
+          snow.y = -10;
+          snow.x = random(width);
+        }
+        if (snow.x < 0) snow.x = width;
+        if (snow.x > width) snow.x = 0;
+      }
+
+      // Hand creates traces
+      if (handData.hands.length > 0) {
+        for (const hand of handData.hands) {
+          if (hand.velocity.speed > 2) {
+            const intensity = min(1, hand.velocity.speed / 20);
+            for (let i = 0; i < floor(intensity * 8); i++) {
+              winterTraces.push({
+                x: hand.center.x + random(-15, 15),
+                y: hand.center.y + random(-15, 15),
+                life: intensity,
+                size: random(3, 8)
+              });
+            }
+          }
+        }
+      }
+
+      // Update traces
+      for (let i = winterTraces.length - 1; i >= 0; i--) {
+        winterTraces[i].life -= 0.015;
+        if (winterTraces[i].life <= 0) {
+          winterTraces.splice(i, 1);
+        }
+      }
+
+      // Draw traces
+      noStroke();
+      for (const trace of winterTraces) {
+        fill(180, 220, 255, trace.life * 200);
+        circle(trace.x, trace.y, trace.size * trace.life);
+      }
+
+      // Draw snow
+      for (const snow of winterSnow) {
+        fill(240, 245, 255, 220);
+        circle(snow.x, snow.y, snow.size);
+      }
+
+      // Cold blue overlay
+      fill(180, 200, 230, 10);
+      rect(0, 0, width, height);
+
+      // UI
+      drawBackButton();
+      fill(180, 220, 255, 180);
+      textAlign(LEFT);
+      textSize(13);
+      text('WINTER ENVIRONMENT', 30, height - 30);
+      textSize(10);
+      text('Move hand to create snow traces', 30, height - 15);
+    }
+
+    // ========================================
+    // UI HELPERS
+    // ========================================
+    function drawBackButton() {
+      push();
+      const hover = mouseX > 30 && mouseX < 120 && mouseY > 30 && mouseY < 60 ? 1 : 0;
+
+      // Glow
+      if (hover > 0.5) {
+        noStroke();
+        fill(255, 200, 230, 40);
+        rect(25, 25, 100, 40, 8);
+      }
+
+      // Button
+      noFill();
+      stroke(255, 200, 230, 120 + hover * 100);
+      strokeWeight(1 + hover * 0.5);
+      rect(30, 30, 90, 30, 6);
+
+      // Label
+      noStroke();
+      fill(255, 220, 240, 180 + hover * 75);
+      textAlign(CENTER, CENTER);
+      textSize(11);
+      text('← BACK', 75, 45);
+
+      pop();
+    }
+  </script>
+</body>
+</html>
