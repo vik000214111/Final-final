@@ -3,8 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Particle Cloud Hub - Mysterious Tree Portal</title>
+    <title>Particle Cloud Hub - Multi-Screen Portal</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <!-- MediaPipe Hands will be integrated here later -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script> -->
     <style>
         body {
             margin: 0;
@@ -22,12 +24,45 @@
             pointer-events: none;
             z-index: 10;
         }
+        #backButton {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            padding: 10px 20px;
+            background: rgba(100, 200, 255, 0.2);
+            border: 2px solid rgba(100, 200, 255, 0.6);
+            color: rgba(100, 200, 255, 0.9);
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            cursor: pointer;
+            z-index: 10;
+            display: none;
+            transition: all 0.3s;
+        }
+        #backButton:hover {
+            background: rgba(100, 200, 255, 0.4);
+            border-color: rgba(100, 200, 255, 1);
+        }
+        #gestureInstructions {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            color: rgba(100, 200, 255, 0.6);
+            font-size: 11px;
+            pointer-events: none;
+            z-index: 10;
+            text-align: right;
+            max-width: 300px;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
     <div id="info">
         Hover over portals to interact • Click to enter season realms
     </div>
+    <button id="backButton" onclick="setState('hub')">← BACK TO HUB</button>
+    <div id="gestureInstructions"></div>
 
     <script>
         // ===========================================
@@ -63,6 +98,45 @@
         };
 
         // ===========================================
+        // STATE MANAGEMENT
+        // ===========================================
+        let currentState = "hub"; // "hub" | "spring" | "summer" | "autumn" | "winter"
+
+        function setState(newState) {
+            console.log(`Switching state: ${currentState} → ${newState}`);
+            currentState = newState;
+
+            // Update UI elements
+            const infoDiv = document.getElementById('info');
+            const backButton = document.getElementById('backButton');
+            const gestureInstructions = document.getElementById('gestureInstructions');
+
+            if (currentState === "hub") {
+                infoDiv.style.display = 'block';
+                backButton.style.display = 'none';
+                gestureInstructions.style.display = 'none';
+            } else {
+                infoDiv.style.display = 'none';
+                backButton.style.display = 'block';
+                gestureInstructions.style.display = 'block';
+
+                // Set room-specific instructions
+                const instructions = {
+                    spring: "Single hand wave → wind field → petals move",
+                    summer: "Two hands → wave surface deforms",
+                    autumn: "Single hand picking gesture → pick apple → drop into basket",
+                    winter: "Two hands → sculpt snow / leave traces"
+                };
+                gestureInstructions.innerHTML = `<strong>${currentState.toUpperCase()} ROOM</strong><br>${instructions[currentState]}`;
+            }
+
+            // Initialize room-specific state if needed
+            if (currentState !== "hub") {
+                initializeRoom(currentState);
+            }
+        }
+
+        // ===========================================
         // GLOBAL STATE
         // ===========================================
         let treeParticles = [];
@@ -71,6 +145,33 @@
         let portals = [];
         let timeOffset = 0;
         let mouseFieldActive = false;
+
+        // ===========================================
+        // MEDIAPIPE HANDS INTEGRATION (PLACEHOLDER)
+        // ===========================================
+        // This section will be populated when webcam/gesture control is added
+        let handDetector = null;
+        let handLandmarks = null;
+
+        function initializeHandDetection() {
+            // TODO: Initialize MediaPipe Hands
+            // const hands = new Hands({locateFile: (file) => {
+            //     return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            // }});
+            // hands.setOptions({
+            //     maxNumHands: 2,
+            //     modelComplexity: 1,
+            //     minDetectionConfidence: 0.5,
+            //     minTrackingConfidence: 0.5
+            // });
+            // hands.onResults(onHandsDetected);
+            console.log("Hand detection placeholder - not yet implemented");
+        }
+
+        function onHandsDetected(results) {
+            // TODO: Process hand landmarks
+            // handLandmarks = results.multiHandLandmarks;
+        }
 
         // Tree structure
         class TreeBranch {
@@ -267,10 +368,7 @@
 
             click() {
                 if (this.hovered) {
-                    console.log(`Navigating to ${this.season} room...`);
-                    // In a real implementation, navigate to season pages
-                    // window.location.href = `${this.season}.html`;
-                    alert(`Entering ${this.season} realm...\n(Navigation placeholder)`);
+                    setState(this.season);
                 }
             }
         }
@@ -488,6 +586,376 @@
         }
 
         // ===========================================
+        // ROOM STATE MANAGEMENT
+        // ===========================================
+        let roomState = {
+            spring: { petals: [], windField: [] },
+            summer: { waves: [], wavePoints: [] },
+            autumn: { apples: [], basket: null },
+            winter: { snowParticles: [], traces: [] }
+        };
+
+        function initializeRoom(room) {
+            console.log(`Initializing ${room} room...`);
+
+            switch(room) {
+                case 'spring':
+                    initializeSpring();
+                    break;
+                case 'summer':
+                    initializeSummer();
+                    break;
+                case 'autumn':
+                    initializeAutumn();
+                    break;
+                case 'winter':
+                    initializeWinter();
+                    break;
+            }
+        }
+
+        // ===========================================
+        // SPRING ROOM - Wind field + petals
+        // ===========================================
+        function initializeSpring() {
+            roomState.spring.petals = [];
+            // Generate some petal particles
+            for (let i = 0; i < 100; i++) {
+                roomState.spring.petals.push({
+                    x: random(width),
+                    y: random(height),
+                    vx: random(-0.5, 0.5),
+                    vy: random(0.5, 1.5),
+                    size: random(4, 8),
+                    rotation: random(TWO_PI),
+                    rotSpeed: random(-0.05, 0.05),
+                    color: [random(200, 255), random(150, 200), random(180, 230)]
+                });
+            }
+        }
+
+        function updateSpring(input) {
+            // TODO: Process hand gesture input for wind field
+            // For now, just update petals with gravity
+            for (let petal of roomState.spring.petals) {
+                petal.x += petal.vx;
+                petal.y += petal.vy;
+                petal.rotation += petal.rotSpeed;
+
+                // Wrap around
+                if (petal.y > height) {
+                    petal.y = -20;
+                    petal.x = random(width);
+                }
+                if (petal.x < 0) petal.x = width;
+                if (petal.x > width) petal.x = 0;
+            }
+        }
+
+        function drawSpring() {
+            // Background gradient
+            for (let i = 0; i < height; i++) {
+                const inter = map(i, 0, height, 0, 1);
+                const c = lerpColor(color(180, 220, 255), color(255, 240, 220), inter);
+                stroke(c);
+                line(0, i, width, i);
+            }
+
+            // Draw placeholder ground
+            fill(100, 180, 100, 150);
+            noStroke();
+            rect(0, height * 0.7, width, height * 0.3);
+
+            // Draw placeholder tree silhouette
+            fill(80, 120, 80, 100);
+            triangle(width/2, height * 0.3, width/2 - 100, height * 0.7, width/2 + 100, height * 0.7);
+
+            // Draw petals
+            for (let petal of roomState.spring.petals) {
+                push();
+                translate(petal.x, petal.y);
+                rotate(petal.rotation);
+                fill(petal.color[0], petal.color[1], petal.color[2], 200);
+                noStroke();
+                ellipse(0, 0, petal.size, petal.size * 1.5);
+                pop();
+            }
+
+            // Label
+            fill(100, 200, 255, 150);
+            textAlign(CENTER, CENTER);
+            textSize(48);
+            text("SPRING", width/2, height * 0.15);
+            textSize(16);
+            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.2);
+        }
+
+        // ===========================================
+        // SUMMER ROOM - Wave surface
+        // ===========================================
+        function initializeSummer() {
+            roomState.summer.wavePoints = [];
+            const spacing = 20;
+            for (let x = 0; x <= width; x += spacing) {
+                for (let y = 0; y <= height; y += spacing) {
+                    roomState.summer.wavePoints.push({
+                        x: x,
+                        y: y,
+                        baseY: y,
+                        offset: random(TWO_PI)
+                    });
+                }
+            }
+        }
+
+        function updateSummer(input) {
+            // TODO: Process two-hand gesture for wave deformation
+            // For now, just animate waves
+            for (let point of roomState.summer.wavePoints) {
+                const wave = sin(frameCount * 0.02 + point.offset + point.x * 0.01) * 15;
+                point.y = point.baseY + wave;
+            }
+        }
+
+        function drawSummer() {
+            // Ocean gradient background
+            for (let i = 0; i < height; i++) {
+                const inter = map(i, 0, height, 0, 1);
+                const c = lerpColor(color(100, 180, 255), color(20, 60, 120), inter);
+                stroke(c);
+                line(0, i, width, i);
+            }
+
+            // Draw wave points
+            stroke(150, 220, 255, 100);
+            strokeWeight(2);
+            for (let point of roomState.summer.wavePoints) {
+                point(point.x, point.y);
+            }
+
+            // Draw some wave lines
+            noFill();
+            stroke(200, 240, 255, 150);
+            strokeWeight(1);
+            for (let y = height * 0.3; y < height; y += 40) {
+                beginShape();
+                for (let x = 0; x <= width; x += 20) {
+                    const wave = sin(frameCount * 0.02 + x * 0.01 + y * 0.005) * 20;
+                    vertex(x, y + wave);
+                }
+                endShape();
+            }
+
+            // Label
+            fill(100, 200, 255, 200);
+            noStroke();
+            textAlign(CENTER, CENTER);
+            textSize(48);
+            text("SUMMER", width/2, height * 0.15);
+            textSize(16);
+            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.2);
+        }
+
+        // ===========================================
+        // AUTUMN ROOM - Apple picking
+        // ===========================================
+        function initializeAutumn() {
+            roomState.autumn.apples = [];
+            roomState.autumn.basket = { x: width/2, y: height * 0.85, width: 100, height: 40 };
+
+            // Generate apples on tree
+            for (let i = 0; i < 15; i++) {
+                roomState.autumn.apples.push({
+                    x: width/2 + random(-150, 150),
+                    y: height * 0.3 + random(0, 200),
+                    size: random(20, 30),
+                    picked: false,
+                    falling: false,
+                    vy: 0
+                });
+            }
+        }
+
+        function updateAutumn(input) {
+            // TODO: Process picking gesture
+            // For now, make apples fall when clicked
+            for (let apple of roomState.autumn.apples) {
+                if (apple.falling) {
+                    apple.vy += 0.5; // gravity
+                    apple.y += apple.vy;
+
+                    // Check basket collision
+                    if (apple.y >= roomState.autumn.basket.y &&
+                        apple.x >= roomState.autumn.basket.x - roomState.autumn.basket.width/2 &&
+                        apple.x <= roomState.autumn.basket.x + roomState.autumn.basket.width/2) {
+                        apple.picked = true;
+                        apple.falling = false;
+                    }
+
+                    // Remove if fell off screen
+                    if (apple.y > height + 50) {
+                        apple.falling = false;
+                        apple.y = -1000; // hide it
+                    }
+                }
+            }
+        }
+
+        function drawAutumn() {
+            // Autumn sky gradient
+            for (let i = 0; i < height; i++) {
+                const inter = map(i, 0, height, 0, 1);
+                const c = lerpColor(color(255, 200, 150), color(200, 120, 80), inter);
+                stroke(c);
+                line(0, i, width, i);
+            }
+
+            // Ground
+            fill(160, 100, 60, 150);
+            noStroke();
+            rect(0, height * 0.75, width, height * 0.25);
+
+            // Tree trunk and branches (simple)
+            fill(100, 60, 40);
+            rect(width/2 - 20, height * 0.3, 40, height * 0.45);
+            ellipse(width/2, height * 0.35, 300, 200);
+
+            // Draw basket
+            fill(160, 120, 80);
+            stroke(100, 70, 50);
+            strokeWeight(2);
+            rect(roomState.autumn.basket.x - roomState.autumn.basket.width/2,
+                 roomState.autumn.basket.y,
+                 roomState.autumn.basket.width,
+                 roomState.autumn.basket.height,
+                 5);
+
+            // Draw apples
+            noStroke();
+            for (let apple of roomState.autumn.apples) {
+                if (!apple.picked && apple.y > -100) {
+                    fill(220, 50, 50);
+                    circle(apple.x, apple.y, apple.size);
+                    // stem
+                    stroke(100, 60, 40);
+                    strokeWeight(2);
+                    line(apple.x, apple.y - apple.size/2, apple.x, apple.y - apple.size/2 - 5);
+                }
+            }
+
+            // Label
+            fill(200, 100, 50, 200);
+            noStroke();
+            textAlign(CENTER, CENTER);
+            textSize(48);
+            text("AUTUMN", width/2, height * 0.12);
+            textSize(16);
+            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.17);
+            textSize(12);
+            text("Click apples to make them fall", width/2, height * 0.21);
+        }
+
+        // ===========================================
+        // WINTER ROOM - Snow sculpting
+        // ===========================================
+        function initializeWinter() {
+            roomState.winter.snowParticles = [];
+            roomState.winter.traces = [];
+
+            // Falling snow
+            for (let i = 0; i < 150; i++) {
+                roomState.winter.snowParticles.push({
+                    x: random(width),
+                    y: random(height),
+                    vx: random(-0.3, 0.3),
+                    vy: random(0.5, 1.5),
+                    size: random(2, 6)
+                });
+            }
+        }
+
+        function updateWinter(input) {
+            // TODO: Process two-hand sculpting gesture
+            // For now, just update falling snow
+            for (let snow of roomState.winter.snowParticles) {
+                snow.x += snow.vx;
+                snow.y += snow.vy;
+
+                // Wrap around
+                if (snow.y > height) {
+                    snow.y = -10;
+                    snow.x = random(width);
+                }
+                if (snow.x < 0) snow.x = width;
+                if (snow.x > width) snow.x = 0;
+            }
+
+            // Add mouse traces (simulating hand trails)
+            if (mouseIsPressed) {
+                roomState.winter.traces.push({
+                    x: mouseX,
+                    y: mouseY,
+                    life: 1.0
+                });
+            }
+
+            // Update traces
+            for (let i = roomState.winter.traces.length - 1; i >= 0; i--) {
+                roomState.winter.traces[i].life -= 0.01;
+                if (roomState.winter.traces[i].life <= 0) {
+                    roomState.winter.traces.splice(i, 1);
+                }
+            }
+        }
+
+        function drawWinter() {
+            // Winter sky gradient
+            for (let i = 0; i < height; i++) {
+                const inter = map(i, 0, height, 0, 1);
+                const c = lerpColor(color(200, 220, 240), color(240, 250, 255), inter);
+                stroke(c);
+                line(0, i, width, i);
+            }
+
+            // Snow ground
+            fill(240, 245, 255, 200);
+            noStroke();
+            rect(0, height * 0.7, width, height * 0.3);
+
+            // Draw traces (hand trails)
+            for (let trace of roomState.winter.traces) {
+                fill(150, 200, 255, trace.life * 150);
+                noStroke();
+                circle(trace.x, trace.y, 15);
+            }
+
+            // Draw falling snow
+            fill(255, 255, 255, 200);
+            noStroke();
+            for (let snow of roomState.winter.snowParticles) {
+                circle(snow.x, snow.y, snow.size);
+            }
+
+            // Draw placeholder snowman
+            fill(255);
+            stroke(200);
+            strokeWeight(2);
+            circle(width/2, height * 0.55, 80);
+            circle(width/2, height * 0.65, 100);
+
+            // Label
+            fill(100, 150, 200, 200);
+            noStroke();
+            textAlign(CENTER, CENTER);
+            textSize(48);
+            text("WINTER", width/2, height * 0.12);
+            textSize(16);
+            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.17);
+            textSize(12);
+            text("Click and drag to leave traces", width/2, height * 0.21);
+        }
+
+        // ===========================================
         // P5.JS MAIN FUNCTIONS
         // ===========================================
         function setup() {
@@ -503,6 +971,31 @@
         }
 
         function draw() {
+            // Route rendering based on current state
+            if (currentState === "hub") {
+                drawHub();
+            } else if (currentState === "spring") {
+                updateSpring(handLandmarks);
+                drawSpring();
+            } else if (currentState === "summer") {
+                updateSummer(handLandmarks);
+                drawSummer();
+            } else if (currentState === "autumn") {
+                updateAutumn(handLandmarks);
+                drawAutumn();
+            } else if (currentState === "winter") {
+                updateWinter(handLandmarks);
+                drawWinter();
+            }
+
+            // Performance indicator
+            if (frameCount % 60 === 0) {
+                console.log(`FPS: ${Math.round(frameRate())}`);
+            }
+        }
+
+        // Hub rendering pipeline (kept exactly as original)
+        function drawHub() {
             // Dark background with slight transparency for trail effect
             background(0, 0, 0, 25);
 
@@ -522,11 +1015,6 @@
             for (let portal of portals) {
                 portal.draw();
             }
-
-            // Performance indicator
-            if (frameCount % 60 === 0) {
-                console.log(`FPS: ${Math.round(frameRate())}`);
-            }
         }
 
         function windowResized() {
@@ -539,22 +1027,52 @@
         }
 
         function mouseClicked() {
-            // Check portal clicks
-            for (let portal of portals) {
-                portal.click();
+            if (currentState === "hub") {
+                // Check portal clicks
+                for (let portal of portals) {
+                    portal.click();
+                }
+            } else if (currentState === "autumn") {
+                // Check apple clicks
+                for (let apple of roomState.autumn.apples) {
+                    if (!apple.picked && !apple.falling) {
+                        const d = dist(mouseX, mouseY, apple.x, apple.y);
+                        if (d < apple.size / 2) {
+                            apple.falling = true;
+                            console.log("Apple clicked!");
+                        }
+                    }
+                }
             }
         }
 
         // Cursor feedback
         function mouseMoved() {
-            let hovering = false;
-            for (let portal of portals) {
-                if (portal.hovered) {
-                    hovering = true;
-                    break;
+            if (currentState === "hub") {
+                let hovering = false;
+                for (let portal of portals) {
+                    if (portal.hovered) {
+                        hovering = true;
+                        break;
+                    }
                 }
+                cursor(hovering ? 'pointer' : 'default');
+            } else if (currentState === "autumn") {
+                // Check if hovering over apples
+                let hoveringApple = false;
+                for (let apple of roomState.autumn.apples) {
+                    if (!apple.picked && !apple.falling) {
+                        const d = dist(mouseX, mouseY, apple.x, apple.y);
+                        if (d < apple.size / 2) {
+                            hoveringApple = true;
+                            break;
+                        }
+                    }
+                }
+                cursor(hoveringApple ? 'pointer' : 'default');
+            } else {
+                cursor('default');
             }
-            cursor(hovering ? 'pointer' : 'default');
         }
     </script>
 </body>
