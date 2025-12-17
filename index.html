@@ -22,7 +22,7 @@
             color: rgba(100, 200, 255, 0.6);
             font-size: 12px;
             pointer-events: none;
-            z-index: 10;
+            z-index: 1001;
         }
         #backButton {
             position: absolute;
@@ -35,7 +35,7 @@
             font-family: 'Courier New', monospace;
             font-size: 14px;
             cursor: pointer;
-            z-index: 10;
+            z-index: 1001;
             display: none;
             transition: all 0.3s;
         }
@@ -44,16 +44,7 @@
             border-color: rgba(100, 200, 255, 1);
         }
         #gestureInstructions {
-            position: absolute;
-            bottom: 20px;
-            right: 20px;
-            color: rgba(100, 200, 255, 0.6);
-            font-size: 11px;
-            pointer-events: none;
-            z-index: 10;
-            text-align: right;
-            max-width: 300px;
-            line-height: 1.5;
+            display: none; /* Now drawn in-canvas */
         }
     </style>
 </head>
@@ -61,7 +52,7 @@
     <div id="info">
         Hover over portals to interact • Click to enter season realms
     </div>
-    <button id="backButton" onclick="setState('hub')">← BACK TO HUB</button>
+    <button id="backButton">← BACK TO HUB</button>
     <div id="gestureInstructions"></div>
 
     <script>
@@ -109,29 +100,15 @@
             // Update UI elements
             const infoDiv = document.getElementById('info');
             const backButton = document.getElementById('backButton');
-            const gestureInstructions = document.getElementById('gestureInstructions');
 
             if (currentState === "hub") {
                 infoDiv.style.display = 'block';
                 backButton.style.display = 'none';
-                gestureInstructions.style.display = 'none';
             } else {
                 infoDiv.style.display = 'none';
                 backButton.style.display = 'block';
-                gestureInstructions.style.display = 'block';
 
-                // Set room-specific instructions
-                const instructions = {
-                    spring: "Single hand wave → wind field → petals move",
-                    summer: "Two hands → wave surface deforms",
-                    autumn: "Single hand picking gesture → pick apple → drop into basket",
-                    winter: "Two hands → sculpt snow / leave traces"
-                };
-                gestureInstructions.innerHTML = `<strong>${currentState.toUpperCase()} ROOM</strong><br>${instructions[currentState]}`;
-            }
-
-            // Initialize room-specific state if needed
-            if (currentState !== "hub") {
+                // Initialize room-specific state if needed
                 initializeRoom(currentState);
             }
         }
@@ -589,10 +566,10 @@
         // ROOM STATE MANAGEMENT
         // ===========================================
         let roomState = {
-            spring: { petals: [], windField: [] },
-            summer: { waves: [], wavePoints: [] },
-            autumn: { apples: [], basket: null },
-            winter: { snowParticles: [], traces: [] }
+            spring: { petals: [], windField: [], ambientParticles: [] },
+            summer: { waves: [], wavePoints: [], ambientParticles: [] },
+            autumn: { apples: [], basket: null, ambientParticles: [] },
+            winter: { snowParticles: [], traces: [], ambientParticles: [] }
         };
 
         function initializeRoom(room) {
@@ -615,6 +592,228 @@
         }
 
         // ===========================================
+        // MYSTERIOUS TECH UI FRAMEWORK
+        // ===========================================
+
+        // Generate ambient tech particles for rooms
+        function generateAmbientParticles(count = 30) {
+            const particles = [];
+            for (let i = 0; i < count; i++) {
+                particles.push({
+                    x: random(width),
+                    y: random(height),
+                    vx: random(-0.2, 0.2),
+                    vy: random(-0.2, 0.2),
+                    size: random(1, 2),
+                    alpha: random(0.1, 0.3),
+                    phase: random(TWO_PI)
+                });
+            }
+            return particles;
+        }
+
+        // Update ambient particles
+        function updateAmbientParticles(particles) {
+            for (let p of particles) {
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Wrap around
+                if (p.x < 0) p.x = width;
+                if (p.x > width) p.x = 0;
+                if (p.y < 0) p.y = height;
+                if (p.y > height) p.y = 0;
+
+                // Subtle pulsing
+                p.alpha = 0.2 + sin(frameCount * 0.02 + p.phase) * 0.1;
+            }
+        }
+
+        // Draw ambient particles
+        function drawAmbientParticles(particles) {
+            noStroke();
+            for (let p of particles) {
+                fill(CONFIG.PARTICLE_COLOR[0],
+                     CONFIG.PARTICLE_COLOR[1],
+                     CONFIG.PARTICLE_COLOR[2],
+                     p.alpha * 255);
+                circle(p.x, p.y, p.size);
+            }
+        }
+
+        // Draw subtle grid background
+        function drawTechGrid(spacing = 50, opacity = 15) {
+            stroke(CONFIG.PARTICLE_COLOR[0],
+                   CONFIG.PARTICLE_COLOR[1],
+                   CONFIG.PARTICLE_COLOR[2],
+                   opacity);
+            strokeWeight(0.5);
+
+            // Vertical lines
+            for (let x = 0; x <= width; x += spacing) {
+                line(x, 0, x, height);
+            }
+
+            // Horizontal lines
+            for (let y = 0; y <= height; y += spacing) {
+                line(0, y, width, y);
+            }
+        }
+
+        // Draw vignette effect
+        function drawVignette() {
+            noStroke();
+            const steps = 10;
+            for (let i = 0; i < steps; i++) {
+                const alpha = map(i, 0, steps, 30, 0);
+                fill(0, 0, 0, alpha);
+                const inset = i * 50;
+                rect(inset, inset, width - inset * 2, height - inset * 2);
+            }
+        }
+
+        // Draw interaction stage boundary
+        function drawStageBoundary() {
+            const stageWidth = width * 0.7;
+            const stageHeight = height * 0.6;
+            const stageX = (width - stageWidth) / 2;
+            const stageY = (height - stageHeight) / 2 + 40;
+
+            push();
+            noFill();
+            stroke(CONFIG.PARTICLE_COLOR[0],
+                   CONFIG.PARTICLE_COLOR[1],
+                   CONFIG.PARTICLE_COLOR[2],
+                   80);
+            strokeWeight(1);
+
+            // Main boundary
+            rect(stageX, stageY, stageWidth, stageHeight);
+
+            // Corner decorations
+            const cornerSize = 15;
+            strokeWeight(2);
+            // Top-left
+            line(stageX, stageY, stageX + cornerSize, stageY);
+            line(stageX, stageY, stageX, stageY + cornerSize);
+            // Top-right
+            line(stageX + stageWidth, stageY, stageX + stageWidth - cornerSize, stageY);
+            line(stageX + stageWidth, stageY, stageX + stageWidth, stageY + cornerSize);
+            // Bottom-left
+            line(stageX, stageY + stageHeight, stageX + cornerSize, stageY + stageHeight);
+            line(stageX, stageY + stageHeight, stageX, stageY + stageHeight - cornerSize);
+            // Bottom-right
+            line(stageX + stageWidth, stageY + stageHeight, stageX + stageWidth - cornerSize, stageY + stageHeight);
+            line(stageX + stageWidth, stageY + stageHeight, stageX + stageWidth, stageY + stageHeight - cornerSize);
+
+            pop();
+        }
+
+        // Draw top bar UI
+        function drawTopBar(roomTitle, statusText) {
+            push();
+
+            // Top bar background
+            fill(0, 0, 0, 150);
+            noStroke();
+            rect(0, 0, width, 60);
+
+            // Top bar border
+            stroke(CONFIG.PARTICLE_COLOR[0],
+                   CONFIG.PARTICLE_COLOR[1],
+                   CONFIG.PARTICLE_COLOR[2],
+                   100);
+            strokeWeight(1);
+            line(0, 60, width, 60);
+
+            // Room title (left)
+            fill(CONFIG.PARTICLE_COLOR[0],
+                 CONFIG.PARTICLE_COLOR[1],
+                 CONFIG.PARTICLE_COLOR[2],
+                 220);
+            noStroke();
+            textAlign(LEFT, CENTER);
+            textSize(20);
+            text(roomTitle, 80, 30);
+
+            // Small accent line
+            stroke(CONFIG.PARTICLE_COLOR[0],
+                   CONFIG.PARTICLE_COLOR[1],
+                   CONFIG.PARTICLE_COLOR[2],
+                   150);
+            strokeWeight(2);
+            line(70, 20, 70, 40);
+
+            // Status text (right)
+            fill(CONFIG.PARTICLE_COLOR[0],
+                 CONFIG.PARTICLE_COLOR[1],
+                 CONFIG.PARTICLE_COLOR[2],
+                 150);
+            noStroke();
+            textAlign(RIGHT, CENTER);
+            textSize(11);
+            text(statusText, width - 20, 30);
+
+            pop();
+        }
+
+        // Draw HUD-style instruction panel
+        function drawInstructionPanel(title, instruction) {
+            push();
+
+            const panelWidth = 280;
+            const panelHeight = 80;
+            const panelX = width - panelWidth - 20;
+            const panelY = height - panelHeight - 20;
+
+            // Panel background
+            fill(0, 0, 0, 180);
+            stroke(CONFIG.PARTICLE_COLOR[0],
+                   CONFIG.PARTICLE_COLOR[1],
+                   CONFIG.PARTICLE_COLOR[2],
+                   120);
+            strokeWeight(1);
+            rect(panelX, panelY, panelWidth, panelHeight, 5);
+
+            // Glow effect on border
+            noFill();
+            stroke(CONFIG.PARTICLE_COLOR[0],
+                   CONFIG.PARTICLE_COLOR[1],
+                   CONFIG.PARTICLE_COLOR[2],
+                   40);
+            strokeWeight(2);
+            rect(panelX - 2, panelY - 2, panelWidth + 4, panelHeight + 4, 5);
+
+            // Title bar
+            fill(CONFIG.PARTICLE_COLOR[0],
+                 CONFIG.PARTICLE_COLOR[1],
+                 CONFIG.PARTICLE_COLOR[2],
+                 30);
+            noStroke();
+            rect(panelX, panelY, panelWidth, 25, 5, 5, 0, 0);
+
+            // Title text
+            fill(CONFIG.PARTICLE_COLOR[0],
+                 CONFIG.PARTICLE_COLOR[1],
+                 CONFIG.PARTICLE_COLOR[2],
+                 220);
+            textAlign(LEFT, CENTER);
+            textSize(12);
+            text(title, panelX + 10, panelY + 12);
+
+            // Instruction text
+            fill(CONFIG.PARTICLE_COLOR[0],
+                 CONFIG.PARTICLE_COLOR[1],
+                 CONFIG.PARTICLE_COLOR[2],
+                 180);
+            textSize(10);
+            textAlign(LEFT, TOP);
+            text(instruction, panelX + 10, panelY + 32, panelWidth - 20);
+
+            pop();
+        }
+
+        // ===========================================
         // SPRING ROOM - Wind field + petals
         // ===========================================
         function initializeSpring() {
@@ -632,6 +831,9 @@
                     color: [random(200, 255), random(150, 200), random(180, 230)]
                 });
             }
+
+            // Generate ambient tech particles
+            roomState.spring.ambientParticles = generateAmbientParticles(30);
         }
 
         function updateSpring(input) {
@@ -650,6 +852,9 @@
                 if (petal.x < 0) petal.x = width;
                 if (petal.x > width) petal.x = 0;
             }
+
+            // Update ambient particles
+            updateAmbientParticles(roomState.spring.ambientParticles);
         }
 
         function drawSpring() {
@@ -661,14 +866,23 @@
                 line(0, i, width, i);
             }
 
+            // Tech grid overlay
+            drawTechGrid(60, 10);
+
+            // Ambient particles layer
+            drawAmbientParticles(roomState.spring.ambientParticles);
+
+            // Stage boundary
+            drawStageBoundary();
+
             // Draw placeholder ground
-            fill(100, 180, 100, 150);
+            fill(100, 180, 100, 100);
             noStroke();
             rect(0, height * 0.7, width, height * 0.3);
 
             // Draw placeholder tree silhouette
-            fill(80, 120, 80, 100);
-            triangle(width/2, height * 0.3, width/2 - 100, height * 0.7, width/2 + 100, height * 0.7);
+            fill(80, 120, 80, 80);
+            triangle(width/2, height * 0.35, width/2 - 100, height * 0.7, width/2 + 100, height * 0.7);
 
             // Draw petals
             for (let petal of roomState.spring.petals) {
@@ -681,13 +895,17 @@
                 pop();
             }
 
-            // Label
-            fill(100, 200, 255, 150);
-            textAlign(CENTER, CENTER);
-            textSize(48);
-            text("SPRING", width/2, height * 0.15);
-            textSize(16);
-            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.2);
+            // Vignette
+            drawVignette();
+
+            // Top bar UI
+            drawTopBar("SPRING ENVIRONMENT", "GESTURE MODE: INACTIVE");
+
+            // Instruction panel
+            drawInstructionPanel(
+                "INTERACTION PROTOCOL",
+                "Single hand wave gesture will generate wind field that affects petal trajectories."
+            );
         }
 
         // ===========================================
@@ -706,6 +924,9 @@
                     });
                 }
             }
+
+            // Generate ambient tech particles
+            roomState.summer.ambientParticles = generateAmbientParticles(30);
         }
 
         function updateSummer(input) {
@@ -715,6 +936,9 @@
                 const wave = sin(frameCount * 0.02 + point.offset + point.x * 0.01) * 15;
                 point.y = point.baseY + wave;
             }
+
+            // Update ambient particles
+            updateAmbientParticles(roomState.summer.ambientParticles);
         }
 
         function drawSummer() {
@@ -726,8 +950,17 @@
                 line(0, i, width, i);
             }
 
+            // Tech grid overlay
+            drawTechGrid(70, 12);
+
+            // Ambient particles layer
+            drawAmbientParticles(roomState.summer.ambientParticles);
+
+            // Stage boundary
+            drawStageBoundary();
+
             // Draw wave points
-            stroke(150, 220, 255, 100);
+            stroke(150, 220, 255, 80);
             strokeWeight(2);
             for (let point of roomState.summer.wavePoints) {
                 point(point.x, point.y);
@@ -735,9 +968,9 @@
 
             // Draw some wave lines
             noFill();
-            stroke(200, 240, 255, 150);
+            stroke(200, 240, 255, 120);
             strokeWeight(1);
-            for (let y = height * 0.3; y < height; y += 40) {
+            for (let y = height * 0.35; y < height * 0.7; y += 40) {
                 beginShape();
                 for (let x = 0; x <= width; x += 20) {
                     const wave = sin(frameCount * 0.02 + x * 0.01 + y * 0.005) * 20;
@@ -746,14 +979,17 @@
                 endShape();
             }
 
-            // Label
-            fill(100, 200, 255, 200);
-            noStroke();
-            textAlign(CENTER, CENTER);
-            textSize(48);
-            text("SUMMER", width/2, height * 0.15);
-            textSize(16);
-            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.2);
+            // Vignette
+            drawVignette();
+
+            // Top bar UI
+            drawTopBar("SUMMER ENVIRONMENT", "GESTURE MODE: INACTIVE");
+
+            // Instruction panel
+            drawInstructionPanel(
+                "INTERACTION PROTOCOL",
+                "Two hands detected will enable wave surface deformation. Hand positions control amplitude and frequency."
+            );
         }
 
         // ===========================================
@@ -761,19 +997,22 @@
         // ===========================================
         function initializeAutumn() {
             roomState.autumn.apples = [];
-            roomState.autumn.basket = { x: width/2, y: height * 0.85, width: 100, height: 40 };
+            roomState.autumn.basket = { x: width/2, y: height * 0.8, width: 100, height: 40 };
 
             // Generate apples on tree
             for (let i = 0; i < 15; i++) {
                 roomState.autumn.apples.push({
                     x: width/2 + random(-150, 150),
-                    y: height * 0.3 + random(0, 200),
+                    y: height * 0.35 + random(0, 150),
                     size: random(20, 30),
                     picked: false,
                     falling: false,
                     vy: 0
                 });
             }
+
+            // Generate ambient tech particles
+            roomState.autumn.ambientParticles = generateAmbientParticles(30);
         }
 
         function updateAutumn(input) {
@@ -799,6 +1038,9 @@
                     }
                 }
             }
+
+            // Update ambient particles
+            updateAmbientParticles(roomState.autumn.ambientParticles);
         }
 
         function drawAutumn() {
@@ -810,15 +1052,24 @@
                 line(0, i, width, i);
             }
 
+            // Tech grid overlay
+            drawTechGrid(65, 8);
+
+            // Ambient particles layer
+            drawAmbientParticles(roomState.autumn.ambientParticles);
+
+            // Stage boundary
+            drawStageBoundary();
+
             // Ground
-            fill(160, 100, 60, 150);
+            fill(160, 100, 60, 120);
             noStroke();
-            rect(0, height * 0.75, width, height * 0.25);
+            rect(0, height * 0.7, width, height * 0.3);
 
             // Tree trunk and branches (simple)
-            fill(100, 60, 40);
-            rect(width/2 - 20, height * 0.3, 40, height * 0.45);
-            ellipse(width/2, height * 0.35, 300, 200);
+            fill(100, 60, 40, 150);
+            rect(width/2 - 20, height * 0.35, 40, height * 0.35);
+            ellipse(width/2, height * 0.4, 280, 180);
 
             // Draw basket
             fill(160, 120, 80);
@@ -843,16 +1094,17 @@
                 }
             }
 
-            // Label
-            fill(200, 100, 50, 200);
-            noStroke();
-            textAlign(CENTER, CENTER);
-            textSize(48);
-            text("AUTUMN", width/2, height * 0.12);
-            textSize(16);
-            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.17);
-            textSize(12);
-            text("Click apples to make them fall", width/2, height * 0.21);
+            // Vignette
+            drawVignette();
+
+            // Top bar UI
+            drawTopBar("AUTUMN ENVIRONMENT", "GESTURE MODE: INACTIVE");
+
+            // Instruction panel
+            drawInstructionPanel(
+                "INTERACTION PROTOCOL",
+                "Single hand picking gesture will trigger apple harvest. Target apples and bring hand down to collect."
+            );
         }
 
         // ===========================================
@@ -872,6 +1124,9 @@
                     size: random(2, 6)
                 });
             }
+
+            // Generate ambient tech particles
+            roomState.winter.ambientParticles = generateAmbientParticles(30);
         }
 
         function updateWinter(input) {
@@ -906,6 +1161,9 @@
                     roomState.winter.traces.splice(i, 1);
                 }
             }
+
+            // Update ambient particles
+            updateAmbientParticles(roomState.winter.ambientParticles);
         }
 
         function drawWinter() {
@@ -917,8 +1175,17 @@
                 line(0, i, width, i);
             }
 
+            // Tech grid overlay
+            drawTechGrid(55, 8);
+
+            // Ambient particles layer
+            drawAmbientParticles(roomState.winter.ambientParticles);
+
+            // Stage boundary
+            drawStageBoundary();
+
             // Snow ground
-            fill(240, 245, 255, 200);
+            fill(240, 245, 255, 150);
             noStroke();
             rect(0, height * 0.7, width, height * 0.3);
 
@@ -930,42 +1197,65 @@
             }
 
             // Draw falling snow
-            fill(255, 255, 255, 200);
+            fill(255, 255, 255, 180);
             noStroke();
             for (let snow of roomState.winter.snowParticles) {
                 circle(snow.x, snow.y, snow.size);
             }
 
             // Draw placeholder snowman
-            fill(255);
-            stroke(200);
+            fill(255, 255, 255, 200);
+            stroke(200, 220, 240);
             strokeWeight(2);
-            circle(width/2, height * 0.55, 80);
-            circle(width/2, height * 0.65, 100);
+            circle(width/2, height * 0.5, 70);
+            circle(width/2, height * 0.6, 90);
 
-            // Label
-            fill(100, 150, 200, 200);
-            noStroke();
-            textAlign(CENTER, CENTER);
-            textSize(48);
-            text("WINTER", width/2, height * 0.12);
-            textSize(16);
-            text("(Low-fi placeholder - gesture control coming soon)", width/2, height * 0.17);
-            textSize(12);
-            text("Click and drag to leave traces", width/2, height * 0.21);
+            // Vignette
+            drawVignette();
+
+            // Top bar UI
+            drawTopBar("WINTER ENVIRONMENT", "GESTURE MODE: INACTIVE");
+
+            // Instruction panel
+            drawInstructionPanel(
+                "INTERACTION PROTOCOL",
+                "Two hands sculpting motion will manipulate snow particles and create persistent trace patterns."
+            );
         }
 
         // ===========================================
         // P5.JS MAIN FUNCTIONS
         // ===========================================
         function setup() {
-            createCanvas(windowWidth, windowHeight);
+            const canvas = createCanvas(windowWidth, windowHeight);
+
+            // Fix canvas layering - ensure it's behind UI elements
+            canvas.elt.style.position = "fixed";
+            canvas.elt.style.left = "0";
+            canvas.elt.style.top = "0";
+            canvas.elt.style.zIndex = "0";
 
             // Generate all elements
             treeParticles = generateTreePoints();
             dustParticles = generateDustParticles();
             connections = generateConnections();
             portals = setupPortals();
+
+            // Setup back button event listener (not inline onclick)
+            document.getElementById('backButton').addEventListener('click', function(e) {
+                e.stopPropagation();
+                setState('hub');
+            });
+
+            // Expose setState globally for potential external use
+            window.setState = setState;
+
+            // ESC key fallback to return to hub
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && currentState !== 'hub') {
+                    setState('hub');
+                }
+            });
 
             console.log("Hub initialized successfully!");
         }
