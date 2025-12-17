@@ -27,12 +27,44 @@
       pointer-events:auto;
     }
     #backButton:hover{ background:rgba(100,200,255,.4); border-color:rgba(100,200,255,1); }
+    #camBox{
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      width: 220px;
+      height: 150px;
+      border: 2px solid rgba(255,255,255,.55);
+      background: rgba(0,0,0,.25);
+      z-index: 4000;
+      border-radius: 12px;
+      overflow: hidden;
+      backdrop-filter: blur(8px);
+    }
+    #camVideo, #camOverlay{
+      position:absolute; left:0; top:0;
+      width:100%; height:100%;
+      object-fit: cover;
+    }
+    #camOverlay{ pointer-events:none; }
+    #camLabel{
+      position:absolute; left:8px; top:6px;
+      font-size: 11px;
+      color: rgba(255,255,255,.9);
+      background: rgba(0,0,0,.35);
+      padding: 3px 6px;
+      border-radius: 8px;
+    }
   </style>
 </head>
 <body>
   <div id="info">Hover over portals to interact • Click to enter season realms</div>
   <button id="backButton">← BACK TO HUB</button>
   <video id="webcam" style="display:none;" playsinline></video>
+  <div id="camBox">
+    <video id="camVideo" autoplay playsinline muted></video>
+    <canvas id="camOverlay"></canvas>
+    <div id="camLabel">CAM • HANDS</div>
+  </div>
 
   <script>
     // ===========================================
@@ -210,6 +242,87 @@
       };
     }
 
+    // ===========================================
+    // CAMERA PREVIEW
+    // ===========================================
+    let camVideoEl, camOverlayEl, camCtx;
+
+    function initializeCameraPreview(){
+      camVideoEl = document.getElementById('camVideo');
+      camOverlayEl = document.getElementById('camOverlay');
+      camCtx = camOverlayEl.getContext('2d');
+
+      function sync(){
+        const w = camOverlayEl.clientWidth;
+        const h = camOverlayEl.clientHeight;
+        camOverlayEl.width = Math.floor(w * devicePixelRatio);
+        camOverlayEl.height = Math.floor(h * devicePixelRatio);
+        camCtx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+      }
+      sync();
+      window.addEventListener('resize', sync);
+    }
+
+    function drawHandPreview(){
+      if(!camCtx || !camOverlayEl) return;
+      const W = camOverlayEl.clientWidth;
+      const H = camOverlayEl.clientHeight;
+      camCtx.clearRect(0,0,W,H);
+
+      const d = window.handData;
+      if(!d || !d.hands || d.hands.length===0){
+        camCtx.fillStyle = "rgba(255,255,255,.8)";
+        camCtx.font = "12px Courier New";
+        camCtx.fillText("No hands", 10, H-10);
+        return;
+      }
+
+      const edges = [
+        [0,1],[1,2],[2,3],[3,4],
+        [0,5],[5,6],[6,7],[7,8],
+        [0,9],[9,10],[10,11],[11,12],
+        [0,13],[13,14],[14,15],[15,16],
+        [0,17],[17,18],[18,19],[19,20],
+        [5,9],[9,13],[13,17]
+      ];
+
+      // 用你隐藏的 webcam 尺寸映射
+      const vw = document.getElementById("webcam").videoWidth || 640;
+      const vh = document.getElementById("webcam").videoHeight || 480;
+      const mirror = true;
+
+      function mapPt(p){
+        let x = (p.x / vw) * W;
+        let y = (p.y / vh) * H;
+        if(mirror) x = W - x;
+        return {x,y};
+      }
+
+      for(const hand of d.hands){
+        const kp = hand.keypointsPx;
+        if(!kp || kp.length !== 21) continue;
+
+        camCtx.strokeStyle = "rgba(255,255,255,.75)";
+        camCtx.lineWidth = 1.2;
+        camCtx.beginPath();
+        for(const [a,b] of edges){
+          const A = mapPt(kp[a]);
+          const B = mapPt(kp[b]);
+          camCtx.moveTo(A.x,A.y);
+          camCtx.lineTo(B.x,B.y);
+        }
+        camCtx.stroke();
+
+        camCtx.fillStyle = "rgba(255,200,220,.95)";
+        for(let i=0;i<21;i++){
+          const P = mapPt(kp[i]);
+          camCtx.beginPath();
+          camCtx.arc(P.x,P.y,2.2,0,Math.PI*2);
+          camCtx.fill();
+        }
+      }
+    }
+
     async function initMediaPipeHands() {
       try {
         // Check for HTTPS
@@ -240,6 +353,9 @@
         const videoElement = document.getElementById('webcam');
         videoElement.srcObject = stream;
         await videoElement.play();
+
+        const camVideo = document.getElementById("camVideo");
+        if (camVideo) { camVideo.srcObject = stream; await camVideo.play(); }
 
         cameraReady = true;
 
@@ -551,6 +667,9 @@
     // ===========================================
     // ROOM STATE
     // ===========================================
+    let springBgGfx = null;
+    let springCanopyPts = null;
+
     let roomState = {
       spring: {
         airPetals: [],
@@ -707,6 +826,9 @@
       for (let i = 0; i < 40; i++) spawnSpringPetal(true);
 
       roomState.spring.ambientParticles = generateAmbientParticles(12);
+
+      buildSpringBackground();   // 背景贴图
+      buildSpringCanopy();       // 樱花树冠点阵（固定，不闪）
     }
 
     function spawnSpringPetal(frozen=false) {
@@ -872,7 +994,7 @@
       const s = roomState.spring;
 
       // 背景：天空 + 远景树林 + 湖
-      drawSpringScenery();
+      if (springBgGfx) image(springBgGfx, 0, 0, width, height);
 
       // 地面
       noStroke();
@@ -893,8 +1015,18 @@
       // 樱花树（更有体量）
       drawCherryTreeBody();
 
-      // 树冠花团（静止也"像盛开"，不需要粒子乱飞）
-      drawCherryCanopyClusters();
+      // 固定树冠点（不闪）
+      if (springCanopyPts){
+        noStroke();
+        for(const p of springCanopyPts){
+          fill(p.col[0], p.col[1], p.col[2], p.alpha);
+          circle(p.x, p.y, p.sz);
+          if(p.hl){
+            fill(255,255,255,150);
+            circle(p.x+random(-1,1), p.y+random(-1,1), p.sz*0.75);
+          }
+        }
+      }
 
       // 空中花瓣（只有有风时才会动；无风时 updateSpring 已经硬冻结）
       for (let p of s.airPetals) {
@@ -1032,6 +1164,92 @@
       // 轻雾（让边缘更柔）
       fill(255,255,255,18);
       rect(0,0,width,height);
+    }
+
+    function buildSpringBackground(){
+      springBgGfx = createGraphics(windowWidth, windowHeight);
+      const g = springBgGfx;
+
+      // 1) sky
+      for(let y=0;y<g.height;y++){
+        const t = y/g.height;
+        const c = lerpColor(color(210,230,245), color(245,250,255), t);
+        g.stroke(c);
+        g.line(0,y,g.width,y);
+      }
+
+      // 2) far forest (noise skyline)
+      g.noStroke();
+      const horizonY = g.height*0.42;
+      g.fill(35,60,50,220);
+      g.rect(0, horizonY, g.width, g.height*0.08);
+
+      g.fill(25,45,38,220);
+      for(let x=0;x<g.width;x+=10){
+        const n = noise(x*0.01);
+        const h = 40 + n*110;
+        g.rect(x, horizonY - h, 12, h);
+      }
+
+      // 3) lake gradient
+      const lakeTop = g.height*0.50;
+      const lakeBot = g.height*0.72;
+      for(let y=Math.floor(lakeTop); y<Math.floor(lakeBot); y++){
+        const t = (y-lakeTop)/(lakeBot-lakeTop);
+        const c = lerpColor(color(165,185,190), color(125,155,165), t);
+        g.stroke(c);
+        g.line(0,y,g.width,y);
+      }
+
+      // 4) subtle horizontal ripples (固定，不抖)
+      g.noFill();
+      g.stroke(255,255,255,18);
+      for(let i=0;i<18;i++){
+        const yy = lakeTop + i*12;
+        g.beginShape();
+        for(let x=0;x<=g.width;x+=28){
+          const w = sin(x*0.012 + i*0.6)*1.6;
+          g.vertex(x, yy + w);
+        }
+        g.endShape();
+      }
+
+      // 5) soft haze
+      g.noStroke();
+      g.fill(255,255,255,22);
+      g.rect(0,0,g.width,g.height);
+    }
+
+    function buildSpringCanopy(){
+      // 生成一次：固定花团点，不闪
+      springCanopyPts = [];
+      const cx = width*0.58;
+      const cy = height*0.34;
+
+      const clusters = [
+        {x:cx-180,y:cy-35,r:170},
+        {x:cx-40, y:cy-80,r:190},
+        {x:cx+140,y:cy-35,r:205},
+        {x:cx+260,y:cy+35,r:175},
+        {x:cx+70, y:cy+85,r:215},
+        {x:cx-120,y:cy+85,r:190},
+      ];
+
+      for(const c of clusters){
+        for(let i=0;i<520;i++){
+          const a = random(TWO_PI);
+          const rr = pow(random(), 0.58) * c.r;
+          const x = c.x + cos(a)*rr;
+          const y = c.y + sin(a)*rr*0.72;
+
+          const whiteBias = random();
+          const col = whiteBias < 0.55 ? [255,235,245] : [255,220,235];
+          const alpha = whiteBias < 0.55 ? random(90,150) : random(110,175);
+          const sz = random(2.2, 5.8);
+
+          springCanopyPts.push({x,y,sz,col,alpha,hl: random()>0.985});
+        }
+      }
     }
 
     // ===========================================
@@ -1393,6 +1611,8 @@
         if (e.key === "Escape" && currentState !== "hub") setState("hub");
       });
 
+      initializeCameraPreview();
+
       console.log("✅ Hub initialized successfully!");
     }
 
@@ -1408,6 +1628,8 @@
       } else if (currentState === "winter") {
         updateWinter(); drawWinter();
       }
+
+      drawHandPreview();
     }
 
     function drawHub() {
@@ -1427,6 +1649,11 @@
 
       if (roomState.summer.gfx) {
         roomState.summer.gfx.resizeCanvas(windowWidth, windowHeight);
+      }
+
+      if (currentState === "spring") {
+        buildSpringBackground();
+        buildSpringCanopy();
       }
     }
 
