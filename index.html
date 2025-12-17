@@ -1630,42 +1630,50 @@
       const by1 = b.y + b.height;      // 篮子下沿
 
       for (let apple of roomState.autumn.apples) {
-        if (apple.falling) {
-          apple.vy += 0.55;
-          apple.y += apple.vy;
-          apple.x += sin(frameCount*0.05 + apple.wobble) * 0.6;
+        if (!apple.falling) continue;
 
-          // ✅ 进入篮子"口"的区域：给一个吸入/对齐
-          const nearMouth = (apple.y >= by0 - 18) && (apple.y <= by1 + 10) && (apple.x >= bx0 - 18) && (apple.x <= bx1 + 18);
+        // 重力下落
+        apple.vy += 0.55;
+        apple.y += apple.vy;
 
-          if (nearMouth) {
-            // 吸向篮子中心
-            apple.x = lerp(apple.x, b.x, 0.35);
-            apple.y = lerp(apple.y, by0 + b.height*0.35, 0.35);
-            apple.vy *= 0.35;
+        // 轻微左右摆动
+        apple.x += sin(frameCount*0.05 + apple.wobble) * 0.6;
 
-            // 足够靠近后，判定"已入筐"
-            const inside = (apple.y >= by0 + 6) && (apple.y <= by1 - 6) && (apple.x >= bx0 + 6) && (apple.x <= bx1 - 6);
-            if (inside || apple.vy < 0.8) {
-              apple.picked = true;
-              apple.falling = false;
+        // ✅ 吸筐：只要开始掉落，就逐渐往筐中心吸（越接近地面越强）
+        const fallT = constrain(map(apple.y, height*0.35, by0, 0, 1), 0, 1);
+        const ax = (b.x - apple.x) * (0.02 + 0.10 * fallT);    // 吸力
+        apple.x += ax;
 
-              // 最终落点：随机落在篮子内部
-              apple.x = b.x + random(-b.width*0.22, b.width*0.22);
-              apple.y = by0 + b.height*0.35 + random(-4, 6);
-            }
-            continue;
-          }
+        // ✅ 进入筐口范围：强吸入并对齐
+        const nearMouth =
+          apple.y >= by0 - 30 && apple.y <= by1 + 20 &&
+          apple.x >= bx0 - 30 && apple.x <= bx1 + 30;
 
-          // 掉到地面：别"瞬移消失"，而是当作没接住
-          const groundY = height * 0.83;
-          if (apple.y > groundY) {
+        if (nearMouth) {
+          apple.x = lerp(apple.x, b.x, 0.35);
+          apple.y = lerp(apple.y, by0 + b.height*0.35, 0.35);
+          apple.vy *= 0.35;
+
+          // 判定真正"在筐内"
+          const inside =
+            apple.y >= by0 + 6 && apple.y <= by1 - 6 &&
+            apple.x >= bx0 + 6 && apple.x <= bx1 - 6;
+
+          if (inside || apple.vy < 0.9) {
+            apple.picked = true;
             apple.falling = false;
-            apple.vy = 0;
-            apple.y = groundY;
-            // （可选）让它在地上轻微滚一点点
-            apple.x += random(-10, 10);
+
+            // 最终落点：随机落在筐内部
+            apple.x = b.x + random(-b.width*0.22, b.width*0.22);
+            apple.y = by0 + b.height*0.35 + random(-4, 6);
           }
+          continue;
+        }
+
+        // 掉出屏幕：停止
+        if (apple.y > height + 80) {
+          apple.falling = false;
+          apple.vy = 0;
         }
       }
       updateAmbientParticles(roomState.autumn.ambientParticles);
@@ -1741,6 +1749,15 @@
       }
 
       drawSoftVignette();
+
+      // DEBUG: basket bounds
+      push();
+      noFill();
+      stroke(0,255,255,180);
+      strokeWeight(2);
+      const b = roomState.autumn.basket;
+      rect(b.x-b.width/2, b.y, b.width, b.height);
+      pop();
 
       let gestureStatus = "MOUSE FALLBACK";
       if (window.handData && window.handData.hands.length > 0) {
