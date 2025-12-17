@@ -102,6 +102,7 @@
     // REFERENCE IMAGE & STYLE EXTRACTION
     // ========================================
     let refImg;
+    let appleImg; // Apple image for Autumn room
     let STYLE = {
       bg: [15, 15, 15],
       primary: [255, 200, 220],
@@ -123,6 +124,14 @@
         extractStyleFromRef(refImg);
       }, () => {
         console.warn('⚠️ Could not load reference image, using default spring1-inspired palette');
+      });
+
+      // Load apple image for Autumn room
+      const appleUrl = 'https://raw.githubusercontent.com/vik000214111/Final-final/main/apple1.png';
+      appleImg = loadImage(appleUrl, () => {
+        console.log('✅ Apple image loaded successfully');
+      }, () => {
+        console.warn('⚠️ Could not load apple image, will use circles as fallback');
       });
     }
 
@@ -923,14 +932,28 @@
 
         const x = apple.falling ? apple.x : apple.x + sin(frameCount * 0.03 + apple.wobble) * 0.6;
 
-        fill(140, 30, 30, 60);
-        circle(x + 2, apple.y + 2, apple.size * 0.95);
+        // Use apple image if loaded, otherwise fallback to circles
+        if (appleImg && appleImg.width > 0) {
+          push();
+          imageMode(CENTER);
+          // Draw shadow
+          tint(140, 30, 30, 60);
+          image(appleImg, x + 2, apple.y + 2, apple.size, apple.size);
+          // Draw apple
+          noTint();
+          image(appleImg, x, apple.y, apple.size, apple.size);
+          pop();
+        } else {
+          // Fallback to circle rendering
+          fill(140, 30, 30, 60);
+          circle(x + 2, apple.y + 2, apple.size * 0.95);
 
-        fill(220, 60, 50, 220);
-        circle(x, apple.y, apple.size);
+          fill(220, 60, 50, 220);
+          circle(x, apple.y, apple.size);
 
-        fill(255, 180, 170, 140);
-        circle(x - apple.size * 0.2, apple.y - apple.size * 0.2, apple.size * 0.35);
+          fill(255, 180, 170, 140);
+          circle(x - apple.size * 0.2, apple.y - apple.size * 0.2, apple.size * 0.35);
+        }
       }
 
       fill(160, 120, 80, 200);
@@ -938,9 +961,19 @@
       fill(140, 100, 60, 150);
       rect(bx0 + 10, by0 + 10, autumnBasket.width - 20, autumnBasket.height - 10, 5);
 
+      // Ground scatter apples
       for (const s of autumnGroundScatter) {
-        fill(220, 60, 50, s.alpha);
-        circle(s.x, s.y, s.size);
+        if (appleImg && appleImg.width > 0) {
+          push();
+          imageMode(CENTER);
+          tint(255, 255, 255, s.alpha);
+          image(appleImg, s.x, s.y, s.size, s.size);
+          pop();
+        } else {
+          // Fallback to circle rendering
+          fill(220, 60, 50, s.alpha);
+          circle(s.x, s.y, s.size);
+        }
       }
 
       drawBackButton();
