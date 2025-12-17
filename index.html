@@ -699,6 +699,7 @@
     let autumnBgGfx = null;
     let autumnTree = null;
     let autumnCanopyPts = null;
+    let autumnCanopyGfx = null;
 
     let roomState = {
       spring: {
@@ -1530,18 +1531,18 @@
       addBranch(baseX, topY+140, baseX+120, topY+70, 10);
 
       // sub branches（更少、更干净、角度更统一）
-      for(let i=0;i<10;i++){
-        const side = (i%2===0) ? -1 : 1;
-        const a = side * random(0.15, 0.75) - 1.15; // 更像向上分叉
-        const len = random(110, 190);
+      for(let i=0;i<8;i++){
+        const a = random(-1.25, -0.25);     // 更偏向往上/斜上，避免竖直乱刺
+        const len = random(90, 170);
 
-        // 从主干附近发出，减少"满屏乱线"
-        const sx = baseX + random(-40, 70);
-        const sy = random(topY+90, topY+210);
+        // ✅ 起点限制在"主树干到两根主枝"附近，别撒到整片区域
+        const sx = lerp(baseX, baseX + random(-180, 220), 0.55);
+        const sy = random(topY+80, topY+190);
 
-        const ex = sx + cos(a)*len;
+        const ex = sx + cos(a)*len * (random()<0.5 ? -1 : 1); // 左右分散
         const ey = sy + sin(a)*len;
-        addBranch(sx,sy, ex,ey, random(4,7));
+
+        addBranch(sx,sy, ex,ey, random(3,6));
       }
 
       // canopy region (用来撒叶子/果子点)
@@ -1622,36 +1623,48 @@
         }
       }
 
+      const b = roomState.autumn.basket;
+      const bx0 = b.x - b.width/2;
+      const bx1 = b.x + b.width/2;
+      const by0 = b.y;                 // 篮子上沿
+      const by1 = b.y + b.height;      // 篮子下沿
+
       for (let apple of roomState.autumn.apples) {
         if (apple.falling) {
-          apple.vy += 0.5;
+          apple.vy += 0.55;
           apple.y += apple.vy;
-          apple.x += sin(frameCount*0.05 + apple.wobble) * 0.6; // 轻微左右摆
+          apple.x += sin(frameCount*0.05 + apple.wobble) * 0.6;
 
-          const b = roomState.autumn.basket;
+          // ✅ 进入篮子"口"的区域：给一个吸入/对齐
+          const nearMouth = (apple.y >= by0 - 18) && (apple.y <= by1 + 10) && (apple.x >= bx0 - 18) && (apple.x <= bx1 + 18);
 
-          // ✅ 进入篮子矩形范围才算成功
-          const inX = (apple.x >= b.x - b.width/2) && (apple.x <= b.x + b.width/2);
-          const inY = (apple.y >= b.y) && (apple.y <= b.y + b.height);
+          if (nearMouth) {
+            // 吸向篮子中心
+            apple.x = lerp(apple.x, b.x, 0.35);
+            apple.y = lerp(apple.y, by0 + b.height*0.35, 0.35);
+            apple.vy *= 0.35;
 
-          if(inX && inY){
-            apple.picked = true;
-            apple.falling = false;
+            // 足够靠近后，判定"已入筐"
+            const inside = (apple.y >= by0 + 6) && (apple.y <= by1 - 6) && (apple.x >= bx0 + 6) && (apple.x <= bx1 - 6);
+            if (inside || apple.vy < 0.8) {
+              apple.picked = true;
+              apple.falling = false;
 
-            // ✅ 吸附到篮子里（视觉上"确实进入框内"）
-            b.contents.push({
-              x: b.x + random(-b.width*0.35, b.width*0.35),
-              y: b.y + b.height - random(8, 22),
-              size: apple.size * random(0.78, 0.95),
-              hl: random(TWO_PI)
-            });
-
-            // 让原苹果消失
-            apple.y = -9999;
+              // 最终落点：随机落在篮子内部
+              apple.x = b.x + random(-b.width*0.22, b.width*0.22);
+              apple.y = by0 + b.height*0.35 + random(-4, 6);
+            }
+            continue;
           }
-          if (apple.y > height + 50) {
+
+          // 掉到地面：别"瞬移消失"，而是当作没接住
+          const groundY = height * 0.83;
+          if (apple.y > groundY) {
             apple.falling = false;
-            apple.y = -1000;
+            apple.vy = 0;
+            apple.y = groundY;
+            // （可选）让它在地上轻微滚一点点
+            apple.x += random(-10, 10);
           }
         }
       }
@@ -1672,7 +1685,7 @@
       rect(0, height*0.70, width, height*0.30);
 
       // 画树：先画叶子团（更像插画），再画枝干
-      drawAutumnCanopy();
+      if(autumnCanopyGfx) image(autumnCanopyGfx, 0, 0, width, height);
       drawAutumnBranches();
 
       // 画苹果（带高光和轻微渐变）
@@ -1740,56 +1753,37 @@
     }
 
     function buildAutumnCanopy(){
-      autumnCanopyPts = [];
-      const cx = autumnTree.baseX + 90;
+      autumnCanopyGfx = createGraphics(windowWidth, windowHeight);
+      const g = autumnCanopyGfx;
+
+      const cx = width*0.32 + 90;
       const cy = height*0.37;
 
-      // 大块树冠区域（少一点块，画面更干净）
-      const blobs = [
-        {ox:-120, oy:-70, r:220},
-        {ox:  60, oy:-90, r:240},
-        {ox: 200, oy: -10, r:210},
-        {ox: -40, oy:  80, r:250},
-        {ox: 140, oy: 110, r:220},
-      ];
+      g.noStroke();
 
-      for(const b of blobs){
-        for(let i=0;i<650;i++){
+      // 叶子团：一次性撒点（不在 draw() 里 random）
+      for(let k=0;k<9;k++){
+        const ox = random(-160, 220);
+        const oy = random(-120, 140);
+        const r  = random(160, 240);
+
+        for(let i=0;i<520;i++){
           const a = random(TWO_PI);
-          const rr = pow(random(), 0.55) * b.r;
-          const x = cx + b.ox + cos(a)*rr;
-          const y = cy + b.oy + sin(a)*rr*0.75;
+          const rr = pow(random(), 0.55) * r;
+          const x = cx + ox + cos(a)*rr;
+          const y = cy + oy + sin(a)*rr*0.75;
 
           const warm = random();
-          const col = (warm<0.55) ? [175,210,110] : [210,230,140];
-          const alpha = (warm<0.55) ? random(90,140) : random(80,130);
-          const sz = random(4,10);
+          if(warm<0.55) g.fill(175, 210, 110, 135);
+          else g.fill(210, 230, 140, 120);
 
-          autumnCanopyPts.push({x,y,sz,col,alpha});
+          g.circle(x,y, random(4,10));
         }
       }
 
-      // 树冠下缘阴影（也固定）
-      autumnCanopyPts.push({shadow:true, x:cx+40, y:cy+130});
-    }
-
-    function drawAutumnCanopy(){
-      if(!autumnCanopyPts) return;
-
-      // leaf points
-      noStroke();
-      for(const p of autumnCanopyPts){
-        if(p.shadow) continue;
-        fill(p.col[0], p.col[1], p.col[2], p.alpha);
-        circle(p.x, p.y, p.sz);
-      }
-
-      // canopy volume shadow
-      for(const p of autumnCanopyPts){
-        if(!p.shadow) continue;
-        fill(0,0,0,18);
-        ellipse(p.x, p.y, 640, 260);
-      }
+      // 树冠阴影下缘（体积感）
+      g.fill(0,0,0,18);
+      g.ellipse(cx+40, cy+130, 640, 260);
     }
 
     function drawAutumnBranches(){
@@ -2021,7 +2015,7 @@
       }
 
       if (currentState === "autumn") {
-        autumnBgGfx = null; autumnTree = null; autumnCanopyPts = null;
+        autumnBgGfx = null; autumnTree = null; autumnCanopyGfx = null;
         buildAutumnBackground();
         buildAutumnTree();
         buildAutumnCanopy();
