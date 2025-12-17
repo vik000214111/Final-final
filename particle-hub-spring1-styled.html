@@ -619,43 +619,39 @@
 
       // ✅ 树居中
       const cx = width * 0.5;
-      const baseY = height * 0.72;
+      const baseY = height * 0.75;
 
-      // ✅ 干净的树干：少量粒子（不抖）
-      for (let i = 0; i < 180; i++) {
-        const t = i / 180;
-        const x = cx + random(-18, 18) * (1 - t);
-        const y = lerp(baseY, height * 0.36, t) + random(-2, 2);
+      // ✅ 简洁的树干（60个粒子，从粗到细）
+      for (let i = 0; i < 60; i++) {
+        const t = i / 60;
+        const x = cx + random(-12, 12) * (1 - t);
+        const y = lerp(baseY, height * 0.40, t) + random(-1, 1);
         springTree.trunk.push({
           x, y,
-          size: lerp(18, 6, t) + random(-1, 1),
-          alpha: 190
+          size: lerp(15, 5, t),
+          alpha: 200
         });
       }
 
-      // ✅ 树冠：几个大团（静态点阵，不抖动）
+      // ✅ 树冠：3个紧凑的团（更少、更集中）
       const canopyCenters = [
-        { x: cx - 160, y: height * 0.34, r: 170 },
-        { x: cx,       y: height * 0.30, r: 210 },
-        { x: cx + 160, y: height * 0.34, r: 170 },
-        { x: cx - 90,  y: height * 0.42, r: 170 },
-        { x: cx + 90,  y: height * 0.42, r: 170 },
+        { x: cx - 120, y: height * 0.38, r: 140 },
+        { x: cx,       y: height * 0.32, r: 180 },
+        { x: cx + 120, y: height * 0.38, r: 140 }
       ];
 
       for (const c of canopyCenters) {
-        for (let i = 0; i < 520; i++) {
+        for (let i = 0; i < 280; i++) {
           const a = random(TWO_PI);
-          const rr = pow(random(), 0.58) * c.r;
+          const rr = pow(random(), 0.6) * c.r;
           springTree.canopy.push({
             x: c.x + cos(a) * rr,
-            y: c.y + sin(a) * rr * 0.75,
-            size: random(3, 10),
-            alpha: random(90, 175)
+            y: c.y + sin(a) * rr * 0.7,
+            size: random(4, 9),
+            alpha: random(100, 180)
           });
         }
       }
-
-      // ❌ 删除地面散点（不要再往 springTree.canopy 里 push random(width) 的部分）
     }
 
     function drawSpring() {
