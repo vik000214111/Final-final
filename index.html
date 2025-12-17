@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Particle Cloud Hub - Multi-Screen Portal</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 
   <style>
     body {
@@ -50,6 +52,7 @@
   <div id="info">Hover over portals to interact • Click to enter season realms</div>
   <button id="backButton">← BACK TO HUB</button>
   <div id="gestureInstructions"></div>
+  <video id="webcam" style="display: none;" playsinline></video>
 
   <script>
     // ===========================================
@@ -107,8 +110,76 @@
     let timeOffset = 0;
     let mouseFieldActive = false;
 
-    // MediaPipe placeholder
+    // MediaPipe Hands
     let handLandmarks = null;
+    let lastLogTime = 0;
+
+    // ===========================================
+    // MEDIAPIPE HANDS INITIALIZATION
+    // ===========================================
+    function onHandResults(results) {
+      handLandmarks = results.multiHandLandmarks && results.multiHandLandmarks.length > 0
+        ? results.multiHandLandmarks
+        : null;
+
+      // Console log every second
+      const now = Date.now();
+      if (now - lastLogTime >= 1000) {
+        lastLogTime = now;
+        if (handLandmarks) {
+          const simplified = handLandmarks.map((hand, idx) => ({
+            hand: idx,
+            landmarks: hand.length,
+            wrist: hand[0],
+            indexTip: hand[8],
+            thumbTip: hand[4]
+          }));
+          console.log("Hand Data:", JSON.stringify(simplified, null, 2));
+        } else {
+          console.log("Hand Data: No hands detected");
+        }
+      }
+    }
+
+    async function initMediaPipeHands() {
+      const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 2,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+      });
+
+      hands.onResults(onHandResults);
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const videoElement = document.getElementById('webcam');
+        videoElement.srcObject = stream;
+        await videoElement.play();
+
+        const camera = new Camera(videoElement, {
+          onFrame: async () => {
+            await hands.send({ image: videoElement });
+          },
+          width: 640,
+          height: 480
+        });
+        camera.start();
+
+        console.log("MediaPipe Hands initialized successfully!");
+      } catch (err) {
+        console.error("Failed to initialize MediaPipe Hands:", err);
+      }
+    }
+
+    // Initialize MediaPipe after page loads
+    window.addEventListener('load', () => {
+      setTimeout(initMediaPipeHands, 1000);
+    });
 
     // ===========================================
     // CLASSES
@@ -567,6 +638,159 @@
     }
 
     // ===========================================
+    // MEDIAPIPE DEBUG OVERLAY & DATA PANEL
+    // ===========================================
+    // MediaPipe hand landmark connections (21 points skeleton)
+    const HAND_CONNECTIONS = [
+      [0, 1], [1, 2], [2, 3], [3, 4],           // Thumb
+      [0, 5], [5, 6], [6, 7], [7, 8],           // Index
+      [0, 9], [9, 10], [10, 11], [11, 12],      // Middle
+      [0, 13], [13, 14], [14, 15], [15, 16],    // Ring
+      [0, 17], [17, 18], [18, 19], [19, 20],    // Pinky
+      [5, 9], [9, 13], [13, 17]                 // Palm
+    ];
+
+    function drawHandDebugOverlay() {
+      if (!handLandmarks) return;
+
+      push();
+      for (let hand of handLandmarks) {
+        // Draw skeleton connections
+        stroke(100, 200, 255, 180);
+        strokeWeight(2);
+        for (let [i, j] of HAND_CONNECTIONS) {
+          const p1 = hand[i];
+          const p2 = hand[j];
+          line(p1.x * width, p1.y * height, p2.x * width, p2.y * height);
+        }
+
+        // Draw 21 landmark points
+        noStroke();
+        for (let i = 0; i < hand.length; i++) {
+          const lm = hand[i];
+          const px = lm.x * width;
+          const py = lm.y * height;
+
+          // Color code: wrist=red, fingertips=green, others=cyan
+          if (i === 0) {
+            fill(255, 100, 100, 220);  // Wrist
+          } else if ([4, 8, 12, 16, 20].includes(i)) {
+            fill(100, 255, 100, 220);  // Fingertips
+          } else {
+            fill(100, 200, 255, 220);  // Other joints
+          }
+          circle(px, py, 8);
+
+          // Label key points
+          if (i === 0 || [4, 8, 12, 16, 20].includes(i)) {
+            fill(255, 255, 255, 200);
+            textSize(9);
+            textAlign(CENTER, CENTER);
+            text(i, px, py - 12);
+          }
+        }
+      }
+      pop();
+    }
+
+    function calculatePalmCenter(hand) {
+      // Palm center = average of wrist + 4 palm base points
+      const palmIndices = [0, 1, 5, 9, 13, 17];
+      let sumX = 0, sumY = 0;
+      for (let i of palmIndices) {
+        sumX += hand[i].x;
+        sumY += hand[i].y;
+      }
+      return { x: sumX / palmIndices.length, y: sumY / palmIndices.length };
+    }
+
+    function calculatePinchStrength(hand) {
+      // Distance between thumb tip (4) and index tip (8)
+      const thumb = hand[4];
+      const index = hand[8];
+      const dx = thumb.x - index.x;
+      const dy = thumb.y - index.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      // Normalize: closer = stronger pinch (invert and clamp)
+      return Math.max(0, Math.min(1, 1 - dist * 15));
+    }
+
+    function calculateHandDistance(hand1, hand2) {
+      const c1 = calculatePalmCenter(hand1);
+      const c2 = calculatePalmCenter(hand2);
+      const dx = c1.x - c2.x;
+      const dy = c1.y - c2.y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    function drawGestureDataPanel() {
+      push();
+
+      const panelWidth = 280;
+      const panelHeight = 140;
+      const panelX = 20;
+      const panelY = height - panelHeight - 20;
+
+      // Panel background
+      fill(0, 0, 0, 180);
+      stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 120);
+      strokeWeight(1);
+      rect(panelX, panelY, panelWidth, panelHeight, 5);
+
+      // Outer glow
+      noFill();
+      stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 40);
+      strokeWeight(2);
+      rect(panelX - 2, panelY - 2, panelWidth + 4, panelHeight + 4, 5);
+
+      // Header
+      fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 30);
+      noStroke();
+      rect(panelX, panelY, panelWidth, 25, 5, 5, 0, 0);
+
+      fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 220);
+      textAlign(LEFT, CENTER);
+      textSize(12);
+      text("GESTURE DATA", panelX + 10, panelY + 12);
+
+      // Data content
+      fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 180);
+      textSize(10);
+      textAlign(LEFT, TOP);
+
+      let yOffset = panelY + 35;
+      const lineHeight = 18;
+
+      if (handLandmarks && handLandmarks.length > 0) {
+        text(`Hands Count: ${handLandmarks.length}`, panelX + 10, yOffset);
+        yOffset += lineHeight;
+
+        for (let i = 0; i < handLandmarks.length; i++) {
+          const hand = handLandmarks[i];
+          const palmCenter = calculatePalmCenter(hand);
+          const pinchStrength = calculatePinchStrength(hand);
+
+          text(`Hand ${i} Palm: (${(palmCenter.x * width).toFixed(0)}, ${(palmCenter.y * height).toFixed(0)})`, panelX + 10, yOffset);
+          yOffset += lineHeight;
+
+          const pinchBar = Math.floor(pinchStrength * 10);
+          const pinchVis = "█".repeat(pinchBar) + "░".repeat(10 - pinchBar);
+          text(`Hand ${i} Pinch: ${pinchVis} ${(pinchStrength * 100).toFixed(0)}%`, panelX + 10, yOffset);
+          yOffset += lineHeight;
+        }
+
+        if (handLandmarks.length === 2) {
+          const dist = calculateHandDistance(handLandmarks[0], handLandmarks[1]);
+          text(`Hand Distance: ${(dist * 100).toFixed(1)}%`, panelX + 10, yOffset);
+        }
+      } else {
+        text("No hands detected", panelX + 10, yOffset);
+      }
+
+      pop();
+    }
+
+    // ===========================================
     // SPRING
     // ===========================================
     function initializeSpring() {
@@ -1013,6 +1237,10 @@
         updateWinter(handLandmarks);
         drawWinter();
       }
+
+      // MediaPipe debug overlay and data panel (always show)
+      drawHandDebugOverlay();
+      drawGestureDataPanel();
 
       if (frameCount % 60 === 0) console.log(`FPS: ${Math.round(frameRate())}`);
     }
