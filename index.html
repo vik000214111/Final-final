@@ -566,7 +566,14 @@
         // ROOM STATE MANAGEMENT
         // ===========================================
         let roomState = {
-            spring: { petals: [], windField: [], ambientParticles: [] },
+            spring: {
+                airPetals: [],           // Moving petals in the air
+                groundPetals: [],        // Accumulated petals on ground (persistent)
+                wind: { x: 0, y: 0, strength: 0 },
+                ambientParticles: [],
+                prevMouseX: 0,
+                prevMouseY: 0
+            },
             summer: { waves: [], wavePoints: [], ambientParticles: [] },
             autumn: { apples: [], basket: null, ambientParticles: [] },
             winter: { snowParticles: [], traces: [], ambientParticles: [] }
@@ -814,43 +821,148 @@
         }
 
         // ===========================================
-        // SPRING ROOM - Wind field + petals
+        // SPRING ROOM - Sakura tree with wind + petal accumulation
         // ===========================================
         function initializeSpring() {
-            roomState.spring.petals = [];
-            // Generate some petal particles
-            for (let i = 0; i < 100; i++) {
-                roomState.spring.petals.push({
-                    x: random(width),
-                    y: random(height),
-                    vx: random(-0.5, 0.5),
-                    vy: random(0.5, 1.5),
-                    size: random(4, 8),
-                    rotation: random(TWO_PI),
-                    rotSpeed: random(-0.05, 0.05),
-                    color: [random(200, 255), random(150, 200), random(180, 230)]
-                });
+            roomState.spring.airPetals = [];
+            roomState.spring.groundPetals = [];
+            roomState.spring.wind = { x: 0, y: 0, strength: 0 };
+            roomState.spring.prevMouseX = mouseX;
+            roomState.spring.prevMouseY = mouseY;
+
+            // Start with some initial airborne petals
+            for (let i = 0; i < 60; i++) {
+                spawnSpringPetal();
             }
 
             // Generate ambient tech particles
             roomState.spring.ambientParticles = generateAmbientParticles(30);
         }
 
+        function spawnSpringPetal() {
+            // Spawn from tree canopy area
+            const treeX = width / 2;
+            const treeCanopyY = height * 0.4;
+
+            roomState.spring.airPetals.push({
+                x: treeX + random(-120, 120),
+                y: treeCanopyY + random(-60, 20),
+                vx: random(-0.3, 0.3),
+                vy: random(0.2, 0.8),
+                rot: random(TWO_PI),
+                rotSpeed: random(-0.08, 0.08),
+                size: random(5, 9),
+                drift: random(-0.1, 0.1),
+                life: 1.0,
+                color: [random(255, 255), random(200, 230), random(220, 240)]
+            });
+        }
+
         function updateSpring(input) {
-            // TODO: Process hand gesture input for wind field
-            // For now, just update petals with gravity
-            for (let petal of roomState.spring.petals) {
+            // TODO: Replace mouse velocity with hand gesture velocity when MediaPipe is integrated
+
+            // Calculate mouse velocity (stand-in for hand wave velocity)
+            const mouseVx = mouseX - roomState.spring.prevMouseX;
+            const mouseVy = mouseY - roomState.spring.prevMouseY;
+            roomState.spring.prevMouseX = mouseX;
+            roomState.spring.prevMouseY = mouseY;
+
+            // Compute wind strength from mouse velocity
+            const rawWindStrength = constrain(sqrt(mouseVx * mouseVx + mouseVy * mouseVy), 0, 20);
+            const targetWindX = mouseVx * 0.5;
+            const targetWindY = mouseVy * 0.5;
+            const targetWindStrength = rawWindStrength / 20; // Normalize 0-1
+
+            // Smooth wind with lerp
+            roomState.spring.wind.x = lerp(roomState.spring.wind.x, targetWindX, 0.15);
+            roomState.spring.wind.y = lerp(roomState.spring.wind.y, targetWindY, 0.15);
+            roomState.spring.wind.strength = lerp(roomState.spring.wind.strength, targetWindStrength, 0.1);
+
+            // Ease wind back to zero when idle
+            if (rawWindStrength < 0.5) {
+                roomState.spring.wind.x *= 0.95;
+                roomState.spring.wind.y *= 0.95;
+                roomState.spring.wind.strength *= 0.95;
+            }
+
+            // Ground collision threshold
+            const groundY = height * 0.72;
+
+            // Update airborne petals
+            for (let i = roomState.spring.airPetals.length - 1; i >= 0; i--) {
+                const petal = roomState.spring.airPetals[i];
+
+                // Apply gravity
+                petal.vy += 0.08;
+
+                // Apply wind force within influence radius
+                const dx = mouseX - petal.x;
+                const dy = mouseY - petal.y;
+                const distToMouse = sqrt(dx * dx + dy * dy);
+                const windInfluenceRadius = 160;
+
+                if (distToMouse < windInfluenceRadius && roomState.spring.wind.strength > 0.05) {
+                    const influence = (1 - distToMouse / windInfluenceRadius) * roomState.spring.wind.strength;
+                    petal.vx += roomState.spring.wind.x * influence * 0.3;
+                    petal.vy += roomState.spring.wind.y * influence * 0.3;
+                }
+
+                // Add turbulence
+                petal.vx += random(-0.05, 0.05);
+                petal.vx += petal.drift;
+                petal.vx *= 0.99; // Drag
+
+                // Update position
                 petal.x += petal.vx;
                 petal.y += petal.vy;
-                petal.rotation += petal.rotSpeed;
 
-                // Wrap around
-                if (petal.y > height) {
-                    petal.y = -20;
-                    petal.x = random(width);
+                // Update rotation
+                petal.rot += petal.rotSpeed;
+
+                // Check ground collision
+                if (petal.y >= groundY) {
+                    // Transfer to ground petals
+                    roomState.spring.groundPetals.push({
+                        x: petal.x,
+                        y: groundY + random(-2, 5), // Slight jitter
+                        rot: petal.rot,
+                        size: petal.size,
+                        alpha: 0.9,
+                        color: petal.color
+                    });
+
+                    // Remove from air
+                    roomState.spring.airPetals.splice(i, 1);
+
+                    // Cap ground petals for performance
+                    if (roomState.spring.groundPetals.length > 2000) {
+                        // Remove oldest 10%
+                        const removeCount = Math.floor(roomState.spring.groundPetals.length * 0.1);
+                        roomState.spring.groundPetals.splice(0, removeCount);
+                    }
+                } else {
+                    // Wrap horizontally
+                    if (petal.x < -20) petal.x = width + 20;
+                    if (petal.x > width + 20) petal.x = -20;
+
+                    // Remove if too far below or above
+                    if (petal.y < -50 || petal.y > height + 50) {
+                        roomState.spring.airPetals.splice(i, 1);
+                    }
                 }
-                if (petal.x < 0) petal.x = width;
-                if (petal.x > width) petal.x = 0;
+            }
+
+            // Spawn new petals to maintain count
+            const maxAirPetals = 180;
+            while (roomState.spring.airPetals.length < maxAirPetals && frameCount % 3 === 0) {
+                spawnSpringPetal();
+            }
+
+            // Very slow spread of ground petals (optional, subtle)
+            for (let gp of roomState.spring.groundPetals) {
+                if (random() > 0.98) {
+                    gp.x += random(-0.5, 0.5);
+                }
             }
 
             // Update ambient particles
@@ -875,36 +987,132 @@
             // Stage boundary
             drawStageBoundary();
 
-            // Draw placeholder ground
-            fill(100, 180, 100, 100);
+            // Draw ground
+            fill(100, 180, 100, 120);
             noStroke();
-            rect(0, height * 0.7, width, height * 0.3);
+            rect(0, height * 0.72, width, height * 0.28);
 
-            // Draw placeholder tree silhouette
-            fill(80, 120, 80, 80);
-            triangle(width/2, height * 0.35, width/2 - 100, height * 0.7, width/2 + 100, height * 0.7);
+            // Draw ground petals FIRST (behind tree)
+            for (let gp of roomState.spring.groundPetals) {
+                push();
+                translate(gp.x, gp.y);
+                rotate(gp.rot);
+                fill(gp.color[0], gp.color[1], gp.color[2], gp.alpha * 200);
+                noStroke();
+                ellipse(0, 0, gp.size * 0.8, gp.size * 1.2);
+                pop();
+            }
 
-            // Draw petals
-            for (let petal of roomState.spring.petals) {
+            // Draw sakura tree with subtle sway
+            const treeX = width / 2;
+            const trunkBase = height * 0.72;
+            const trunkTop = height * 0.45;
+            const swayOffset = sin(frameCount * 0.02) * 3; // Subtle sway
+
+            push();
+
+            // Trunk
+            fill(80, 60, 50, 200);
+            noStroke();
+            rect(treeX - 15, trunkTop, 30, trunkBase - trunkTop);
+
+            // Main branches using bezier curves
+            stroke(90, 70, 60, 200);
+            strokeWeight(8);
+            noFill();
+
+            // Left branch
+            beginShape();
+            vertex(treeX, trunkTop + 20);
+            bezierVertex(
+                treeX - 40 + swayOffset, trunkTop + 40,
+                treeX - 80 + swayOffset, trunkTop + 60,
+                treeX - 110 + swayOffset, trunkTop + 100
+            );
+            endShape();
+
+            // Right branch
+            beginShape();
+            vertex(treeX, trunkTop + 20);
+            bezierVertex(
+                treeX + 40 - swayOffset, trunkTop + 40,
+                treeX + 80 - swayOffset, trunkTop + 60,
+                treeX + 110 - swayOffset, trunkTop + 100
+            );
+            endShape();
+
+            // Upper left branch
+            strokeWeight(6);
+            beginShape();
+            vertex(treeX, trunkTop + 10);
+            bezierVertex(
+                treeX - 30 + swayOffset * 0.8, trunkTop + 15,
+                treeX - 60 + swayOffset * 0.8, trunkTop + 30,
+                treeX - 85 + swayOffset * 0.8, trunkTop + 55
+            );
+            endShape();
+
+            // Upper right branch
+            beginShape();
+            vertex(treeX, trunkTop + 10);
+            bezierVertex(
+                treeX + 30 - swayOffset * 0.8, trunkTop + 15,
+                treeX + 60 - swayOffset * 0.8, trunkTop + 30,
+                treeX + 85 - swayOffset * 0.8, trunkTop + 55
+            );
+            endShape();
+
+            // Center upward branch
+            strokeWeight(7);
+            beginShape();
+            vertex(treeX, trunkTop);
+            bezierVertex(
+                treeX + swayOffset, trunkTop - 20,
+                treeX + swayOffset * 1.2, trunkTop - 40,
+                treeX + swayOffset * 1.5, trunkTop - 60
+            );
+            endShape();
+
+            pop();
+
+            // Canopy blossom clusters (many small dots)
+            noStroke();
+            for (let i = 0; i < 200; i++) {
+                const cx = treeX + random(-130, 130) + swayOffset * random(-0.5, 0.5);
+                const cy = trunkTop + random(-70, 120);
+                const dist = sqrt((cx - treeX) * (cx - treeX) + (cy - (trunkTop + 25)) * (cy - (trunkTop + 25)));
+
+                // Create cluster shape
+                if (dist < 140) {
+                    fill(255, random(210, 230), random(220, 240), random(150, 220));
+                    circle(cx, cy, random(3, 7));
+                }
+            }
+
+            // Draw airborne petals
+            for (let petal of roomState.spring.airPetals) {
                 push();
                 translate(petal.x, petal.y);
-                rotate(petal.rotation);
-                fill(petal.color[0], petal.color[1], petal.color[2], 200);
+                rotate(petal.rot);
+                fill(petal.color[0], petal.color[1], petal.color[2], 220);
                 noStroke();
-                ellipse(0, 0, petal.size, petal.size * 1.5);
+                ellipse(0, 0, petal.size, petal.size * 1.4);
                 pop();
             }
 
             // Vignette
             drawVignette();
 
-            // Top bar UI
-            drawTopBar("SPRING ENVIRONMENT", "GESTURE MODE: INACTIVE");
+            // Top bar UI with wind strength and counts
+            const windBar = Math.floor(roomState.spring.wind.strength * 20);
+            const windBarStr = '█'.repeat(windBar) + '░'.repeat(20 - windBar);
+            const statusText = `WIND: ${windBarStr} | AIR: ${roomState.spring.airPetals.length} | GROUND: ${roomState.spring.groundPetals.length}`;
+            drawTopBar("SPRING ENVIRONMENT", statusText);
 
             // Instruction panel
             drawInstructionPanel(
                 "INTERACTION PROTOCOL",
-                "Single hand wave gesture will generate wind field that affects petal trajectories."
+                "Wave one hand to create wind. Petals fall and accumulate on the ground."
             );
         }
 
