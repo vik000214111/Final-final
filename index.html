@@ -196,9 +196,18 @@
           : "Unknown";
 
         // Convert to pixel coordinates
+        const webcamEl = document.getElementById("webcam");
+        const vw = webcamEl?.videoWidth || 640;
+        const vh = webcamEl?.videoHeight || 480;
+
         const keypointsPx = landmarks.map(lm => ({
           x: lm.x * width,
           y: lm.y * height
+        }));
+
+        const keypointsCamPx = landmarks.map(lm => ({
+          x: lm.x * vw,
+          y: lm.y * vh
         }));
 
         const center = calculateHandCenter(landmarks);
@@ -219,6 +228,7 @@
           handedness,
           landmarks,  // Normalized 0-1
           keypointsPx,
+          keypointsCamPx,
           center: centerPx,
           velocity,
           pinch,
@@ -299,7 +309,7 @@
       }
 
       for(const hand of d.hands){
-        const kp = hand.keypointsPx;
+        const kp = hand.keypointsCamPx;
         if(!kp || kp.length !== 21) continue;
 
         camCtx.strokeStyle = "rgba(255,255,255,.75)";
@@ -355,7 +365,16 @@
         await videoElement.play();
 
         const camVideo = document.getElementById("camVideo");
-        if (camVideo) { camVideo.srcObject = stream; await camVideo.play(); }
+        if (camVideo) {
+          camVideo.srcObject = stream;
+          camVideo.muted = true;
+          camVideo.setAttribute("muted", "");
+          camVideo.setAttribute("playsinline", "");
+          camVideo.onloadedmetadata = async () => {
+            try { await camVideo.play(); }
+            catch(e){ console.warn("camVideo autoplay blocked:", e); }
+          };
+        }
 
         cameraReady = true;
 
@@ -391,6 +410,11 @@
     window.addEventListener('load', () => {
       setTimeout(initMediaPipeHands, 500);
     });
+
+    window.addEventListener("pointerdown", async () => {
+      const v = document.getElementById("camVideo");
+      if (v && v.paused) { try { await v.play(); } catch(e){} }
+    }, { once:true });
 
     // ===========================================
     // CLASSES
@@ -1023,7 +1047,7 @@
           circle(p.x, p.y, p.sz);
           if(p.hl){
             fill(255,255,255,150);
-            circle(p.x+random(-1,1), p.y+random(-1,1), p.sz*0.75);
+            circle(p.x + p.ox, p.y + p.oy, p.sz*0.75);
           }
         }
       }
@@ -1247,7 +1271,9 @@
           const alpha = whiteBias < 0.55 ? random(90,150) : random(110,175);
           const sz = random(2.2, 5.8);
 
-          springCanopyPts.push({x,y,sz,col,alpha,hl: random()>0.985});
+          const ox = random(-1.2, 1.2);
+          const oy = random(-1.2, 1.2);
+          springCanopyPts.push({x,y,sz,col,alpha,hl: random()>0.985, ox, oy});
         }
       }
     }
