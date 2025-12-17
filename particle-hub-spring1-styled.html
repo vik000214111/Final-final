@@ -319,22 +319,29 @@
       const vw = document.getElementById('camVideo').videoWidth || 640;
       const vh = document.getElementById('camVideo').videoHeight || 480;
 
+      // ✅ 统一镜像开关：在数据层就镜像所有坐标，所有季节自动正确
+      const mirrorX = true;
+
       handData.hands = results.multiHandLandmarks.map((landmarks, idx) => {
+        // Canvas坐标（镜像，用于主画布交互）
         const keypointsPx = landmarks.map(lm => ({
-          x: (1 - lm.x) * width,
+          x: mirrorX ? (width - lm.x * width) : (lm.x * width),
           y: lm.y * height
         }));
 
+        // Camera坐标（不镜像，预览层会单独镜像以避免双重镜像）
         const keypointsCamPx = landmarks.map(lm => ({
           x: lm.x * vw,
           y: lm.y * vh
         }));
 
+        // 中心点（从镜像后的 keypointsPx 计算，自动镜像）
         const center = {
           x: keypointsPx.reduce((sum, p) => sum + p.x, 0) / 21,
           y: keypointsPx.reduce((sum, p) => sum + p.y, 0) / 21
         };
 
+        // 速度（用镜像后的 center 计算，方向自动正确）
         const prevCenter = handData.hands[idx]?.center || center;
         const velocity = {
           x: center.x - prevCenter.x,
