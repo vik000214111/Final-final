@@ -27,57 +27,12 @@
       pointer-events:auto;
     }
     #backButton:hover{ background:rgba(100,200,255,.4); border-color:rgba(100,200,255,1); }
-    #debugOverlay{
-      position:absolute; top:20px; right:20px;
-      color:rgba(100,200,255,.8); font-size:10px;
-      font-family:"Courier New", monospace;
-      pointer-events:none; z-index:2001;
-      background:rgba(0,0,0,.5); padding:8px;
-      border:1px solid rgba(100,200,255,.3);
-    }
-    #camBox{
-      position: fixed;
-      left: 16px;
-      bottom: 16px;
-      width: 220px;
-      height: 150px;
-      border: 2px solid rgba(100,200,255,.6);
-      background: rgba(0,0,0,.35);
-      z-index: 4000;
-      border-radius: 10px;
-      overflow: hidden;
-      backdrop-filter: blur(6px);
-    }
-    #camVideo, #camOverlay{
-      position:absolute;
-      left:0; top:0;
-      width:100%;
-      height:100%;
-      object-fit: cover;
-    }
-    #camOverlay{ pointer-events:none; }
-    #camLabel{
-      position:absolute;
-      left:8px; top:6px;
-      font-size: 11px;
-      color: rgba(100,200,255,.9);
-      background: rgba(0,0,0,.35);
-      padding: 3px 6px;
-      border-radius: 6px;
-    }
   </style>
 </head>
 <body>
   <div id="info">Hover over portals to interact • Click to enter season realms</div>
   <button id="backButton">← BACK TO HUB</button>
-  <div id="debugOverlay"></div>
   <video id="webcam" style="display:none;" playsinline></video>
-
-  <div id="camBox">
-    <video id="camVideo" autoplay playsinline muted></video>
-    <canvas id="camOverlay"></canvas>
-    <div id="camLabel">CAM • HANDS</div>
-  </div>
 
   <script>
     // ===========================================
@@ -139,121 +94,6 @@
     let cameraReady = false;
     let handsInstance = null;
 
-    // Camera preview
-    let camVideoEl, camOverlayEl, camCtx;
-
-    // ===========================================
-    // CAMERA PREVIEW WINDOW
-    // ===========================================
-    function initializeCameraPreview(){
-      camVideoEl = document.getElementById('camVideo');
-      camOverlayEl = document.getElementById('camOverlay');
-      camCtx = camOverlayEl.getContext('2d');
-
-      // canvas 像素尺寸和容器同步（避免糊）
-      function syncOverlaySize(){
-        const w = camOverlayEl.clientWidth;
-        const h = camOverlayEl.clientHeight;
-        camOverlayEl.width = Math.floor(w * devicePixelRatio);
-        camOverlayEl.height = Math.floor(h * devicePixelRatio);
-        camCtx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
-      }
-      syncOverlaySize();
-      window.addEventListener('resize', syncOverlaySize);
-
-      // 摄像头（如果已经在 MediaPipe 初始化里拿到了 stream，可把 stream 直接赋给 camVideoEl.srcObject）
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio:false })
-        .then(stream => {
-          camVideoEl.srcObject = stream;
-          camVideoEl.play();
-        })
-        .catch(err => {
-          console.warn("Camera permission failed for preview:", err);
-          // 失败时也保留框，但显示提示
-          camCtx.clearRect(0,0,camOverlayEl.width,camOverlayEl.height);
-          camCtx.fillStyle = "rgba(0,0,0,.6)";
-          camCtx.fillRect(0,0,220,150);
-          camCtx.fillStyle = "rgba(100,200,255,.9)";
-          camCtx.font = "12px Courier New";
-          camCtx.fillText("Camera blocked", 12, 72);
-        });
-    }
-
-    function drawHandPreview(){
-      if(!camCtx || !camOverlayEl) return;
-
-      const W = camOverlayEl.clientWidth;
-      const H = camOverlayEl.clientHeight;
-
-      camCtx.clearRect(0,0,W,H);
-
-      // 没检测到手时画个轻提示
-      const data = window.handData || null;
-      if(!data || !data.hands || data.hands.length === 0){
-        camCtx.fillStyle = "rgba(100,200,255,.55)";
-        camCtx.font = "11px Courier New";
-        camCtx.fillText("No hands", 10, H - 10);
-        return;
-      }
-
-      // 手的骨架连线（MediaPipe 21点索引）
-      const edges = [
-        [0,1],[1,2],[2,3],[3,4],          // thumb
-        [0,5],[5,6],[6,7],[7,8],          // index
-        [0,9],[9,10],[10,11],[11,12],     // middle
-        [0,13],[13,14],[14,15],[15,16],   // ring
-        [0,17],[17,18],[18,19],[19,20],   // pinky
-        [5,9],[9,13],[13,17]              // palm
-      ];
-
-      for(const hand of data.hands){
-        // keypointsPx 是相对于"原始视频像素"的；我们要映射到小窗尺寸
-        const kp = hand.keypointsPx;
-        if(!kp || kp.length !== 21) continue;
-
-        // ✅ 视频实际尺寸
-        const vw = camVideoEl.videoWidth || 640;
-        const vh = camVideoEl.videoHeight || 480;
-
-        // ✅ 镜像：前置摄像头常见"镜像显示"，为了让小窗像自拍一样
-        const mirror = true;
-
-        function mapPt(p){
-          let x = (p.x / vw) * W;
-          let y = (p.y / vh) * H;
-          if(mirror) x = W - x;
-          return {x,y};
-        }
-
-        // 连线
-        camCtx.strokeStyle = "rgba(100,200,255,.7)";
-        camCtx.lineWidth = 1.2;
-        camCtx.beginPath();
-        for(const [a,b] of edges){
-          const A = mapPt(kp[a]);
-          const B = mapPt(kp[b]);
-          camCtx.moveTo(A.x, A.y);
-          camCtx.lineTo(B.x, B.y);
-        }
-        camCtx.stroke();
-
-        // 关键点
-        camCtx.fillStyle = "rgba(180,240,255,.9)";
-        for(let i=0;i<21;i++){
-          const P = mapPt(kp[i]);
-          camCtx.beginPath();
-          camCtx.arc(P.x, P.y, 2.2, 0, Math.PI*2);
-          camCtx.fill();
-        }
-
-        // pinch 状态 + speed
-        camCtx.fillStyle = hand.pinch?.isPinching ? "rgba(255,180,200,.95)" : "rgba(100,200,255,.85)";
-        camCtx.font = "10px Courier New";
-        const s = (hand.velocity?.speed ?? 0).toFixed(1);
-        camCtx.fillText(`${hand.handedness || "Hand"} | pinch:${hand.pinch?.isPinching ? "Y":"N"} | v:${s}`, 8, 14);
-      }
-    }
-
     // ===========================================
     // MEDIAPIPE HANDS INITIALIZATION
     // ===========================================
@@ -283,7 +123,7 @@
       const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
       // Normalize: typical pinch is < 0.05, open is > 0.15
       const value = 1 - Math.min(1, Math.max(0, (dist - 0.02) / 0.13));
-      const isPinching = value > 0.7;
+      const isPinching = value > 0.55;
       return { isPinching, value };
     }
 
@@ -393,11 +233,8 @@
 
         // Get webcam
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            facingMode: 'user'
-          }
+          video: { width:{ideal:1280}, height:{ideal:720}, facingMode:'user' },
+          audio:false
         });
 
         const videoElement = document.getElementById('webcam');
@@ -715,7 +552,15 @@
     // ROOM STATE
     // ===========================================
     let roomState = {
-      spring: { airPetals: [], groundPetals: [], wind: {x:0,y:0,strength:0}, ambientParticles: [], prevMouseX:0, prevMouseY:0 },
+      spring: {
+        airPetals: [],
+        groundPetals: [],
+        wind: {x:0,y:0,strength:0},
+        windActive:false,
+        stillFrames:0,
+        ambientParticles: [],
+        prevMouseX:0, prevMouseY:0
+      },
       summer: { ambientParticles: [], gfx: null, cols: 160, rows: 90, t: 0 },
       autumn: { apples: [], basket: null, ambientParticles: [] },
       winter: { snowParticles: [], traces: [], ambientParticles: [] },
@@ -848,32 +693,6 @@
       }
     }
 
-    function updateDebugOverlay() {
-      const overlay = document.getElementById('debugOverlay');
-      if (!window.handData) {
-        overlay.innerHTML = 'HandData: Initializing...';
-        return;
-      }
-
-      const d = window.handData;
-      const handsCount = d.hands.length;
-
-      let html = `Hands: ${handsCount} | FPS: ${d.debug.fpsHands}<br>`;
-
-      if (d.debug.errors) {
-        html += `<span style="color:#f88">⚠ ${d.debug.errors}</span>`;
-      } else if (handsCount > 0) {
-        const h = d.hands[0];
-        html += `Pinch: ${(h.pinch.value * 100).toFixed(0)}% ${h.pinch.isPinching ? '🤏' : ''}<br>`;
-        html += `Speed: ${h.velocity.speed.toFixed(1)}px/f<br>`;
-        html += `Open: ${(h.openness * 100).toFixed(0)}%`;
-      } else {
-        html += 'No hands detected';
-      }
-
-      overlay.innerHTML = html;
-    }
-
     // ===========================================
     // SPRING (Hand velocity → wind)
     // ===========================================
@@ -881,202 +700,338 @@
       roomState.spring.airPetals = [];
       roomState.spring.groundPetals = [];
       roomState.spring.wind = { x: 0, y: 0, strength: 0 };
-      roomState.spring.prevMouseX = mouseX;
-      roomState.spring.prevMouseY = mouseY;
-      for (let i = 0; i < 60; i++) spawnSpringPetal();
-      roomState.spring.ambientParticles = generateAmbientParticles(30);
+      roomState.spring.windActive = false;
+      roomState.spring.stillFrames = 0;
+
+      // 默认不生成会掉落的花瓣（静止状态只画"树冠花团"）
+      for (let i = 0; i < 40; i++) spawnSpringPetal(true);
+
+      roomState.spring.ambientParticles = generateAmbientParticles(12);
     }
 
-    function spawnSpringPetal() {
+    function spawnSpringPetal(frozen=false) {
       const treeX = width / 2;
-      const treeCanopyY = height * 0.4;
+      const treeCanopyY = height * 0.38;
+
+      const px = treeX + random(-220, 220);
+      const py = treeCanopyY + random(-140, 60);
+
       roomState.spring.airPetals.push({
-        x: treeX + random(-120, 120),
-        y: treeCanopyY + random(-60, 20),
-        vx: random(-0.3, 0.3),
-        vy: random(0.2, 0.8),
+        x: px, y: py,
+        vx: frozen ? 0 : random(-0.2, 0.2),
+        vy: frozen ? 0 : random(0.1, 0.4),
         rot: random(TWO_PI),
-        rotSpeed: random(-0.08, 0.08),
-        size: random(5, 9),
-        drift: random(-0.1, 0.1),
+        rotSpeed: frozen ? 0 : random(-0.05, 0.05),
+        size: random(4, 10),
+        drift: 0,
         life: 1.0,
-        color: [255, random(200, 230), random(220, 240)],
+
+        // 更接近真实樱花：更柔、更淡
+        color: [255, random(210, 235), random(220, 245)],
+        alpha: random(140, 220),
+
+        // depth：用于远近/模糊/亮度（假景深）
+        depth: random(0, 1)
       });
     }
 
     function updateSpring() {
-      // Hand gesture → wind
-      if (window.handData && window.handData.hands.length > 0) {
+      const s = roomState.spring;
+
+      // 只用手势，不用鼠标兜底
+      const hasHand = window.handData && window.handData.hands.length > 0;
+
+      // deadzone + hysteresis（避免微抖导致误判有风）
+      const DEAD_SPEED_ON  = 3.2;  // 超过这个才算"开始有风"
+      const DEAD_SPEED_OFF = 2.0;  // 低于这个持续几帧才算"停风"
+      const OFF_HOLD_FRAMES = 10;  // 需要连续静止多少帧才关风
+
+      let targetWindX = 0, targetWindY = 0, targetStrength = 0;
+
+      if (hasHand) {
         const hand = window.handData.hands[0];
-        const windStrength = Math.min(1, hand.velocity.speed / 20);
-        roomState.spring.wind.x = lerp(roomState.spring.wind.x, hand.velocity.x * 0.5, 0.2);
-        roomState.spring.wind.y = lerp(roomState.spring.wind.y, hand.velocity.y * 0.5, 0.2);
-        roomState.spring.wind.strength = lerp(roomState.spring.wind.strength, windStrength, 0.15);
+        const vx = hand.velocity.x;
+        const vy = hand.velocity.y;
+        const sp = hand.velocity.speed;
+
+        if (sp > DEAD_SPEED_ON) {
+          s.windActive = true;
+          s.stillFrames = 0;
+
+          // 风向跟手一致：手往哪挥 wind 往哪吹
+          const GAIN = 1.8;
+          targetWindX = vx * GAIN;
+          targetWindY = vy * GAIN;
+
+          // 强度
+          targetStrength = constrain((sp - DEAD_SPEED_ON) / 18, 0, 1);
+        } else {
+          // 低速：累积静止帧，达到阈值才真正关风
+          s.stillFrames++;
+          if (s.windActive && (sp < DEAD_SPEED_OFF) && s.stillFrames >= OFF_HOLD_FRAMES) {
+            s.windActive = false;
+          }
+        }
       } else {
-        // Fallback to mouse
-        const mouseVx = mouseX - roomState.spring.prevMouseX;
-        const mouseVy = mouseY - roomState.spring.prevMouseY;
-        const rawWindStrength = constrain(sqrt(mouseVx * mouseVx + mouseVy * mouseVy), 0, 20);
-        roomState.spring.wind.x = lerp(roomState.spring.wind.x, mouseVx * 0.5, 0.15);
-        roomState.spring.wind.y = lerp(roomState.spring.wind.y, mouseVy * 0.5, 0.15);
-        roomState.spring.wind.strength = lerp(roomState.spring.wind.strength, rawWindStrength / 20, 0.1);
+        // 没检测到手：直接无风
+        s.windActive = false;
+        s.stillFrames = 0;
       }
 
-      roomState.spring.prevMouseX = mouseX;
-      roomState.spring.prevMouseY = mouseY;
-
-      if (roomState.spring.wind.strength < 0.05) {
-        roomState.spring.wind.x *= 0.95;
-        roomState.spring.wind.y *= 0.95;
-        roomState.spring.wind.strength *= 0.95;
+      // 平滑 wind 值（但如果关风了，要快速归零）
+      if (!s.windActive) {
+        s.wind.x = 0;
+        s.wind.y = 0;
+        s.wind.strength = 0;
+      } else {
+        s.wind.x = lerp(s.wind.x, targetWindX, 0.25);
+        s.wind.y = lerp(s.wind.y, targetWindY, 0.25);
+        s.wind.strength = lerp(s.wind.strength, targetStrength, 0.20);
       }
 
+      // ✅ 无风：花瓣"1 像素都不动"（硬冻结）
+      if (!s.windActive || s.wind.strength < 0.02) {
+        // 完全冻结：不要更新位置/速度/旋转，也不要加随机扰动
+        updateAmbientParticles(s.ambientParticles);
+        return;
+      }
+
+      // ✅ 有风：才允许生成/下落/受风影响
       const groundY = height * 0.72;
 
-      for (let i = roomState.spring.airPetals.length - 1; i >= 0; i--) {
-        const petal = roomState.spring.airPetals[i];
-        petal.vy += 0.08;
+      // 有风时补充一些空中花瓣（模拟被吹落/卷起）
+      const maxAirPetals = 220;
+      if (s.airPetals.length < maxAirPetals && frameCount % 2 === 0) spawnSpringPetal(false);
 
-        // Wind influence (hand-driven or mouse-driven)
-        let influenceX = mouseX;
-        let influenceY = mouseY;
-        if (window.handData && window.handData.hands.length > 0) {
-          influenceX = window.handData.hands[0].center.x;
-          influenceY = window.handData.hands[0].center.y;
-        }
+      const influenceX = window.handData?.hands?.[0]?.center?.x ?? width/2;
+      const influenceY = window.handData?.hands?.[0]?.center?.y ?? height/2;
+      const windInfluenceRadius = 220;
 
-        const dx = influenceX - petal.x;
-        const dy = influenceY - petal.y;
-        const distToInfluence = sqrt(dx * dx + dy * dy);
-        const windInfluenceRadius = 160;
+      for (let i = s.airPetals.length - 1; i >= 0; i--) {
+        const p = s.airPetals[i];
 
-        if (distToInfluence < windInfluenceRadius && roomState.spring.wind.strength > 0.05) {
-          const influence = (1 - distToInfluence / windInfluenceRadius) * roomState.spring.wind.strength;
-          petal.vx += roomState.spring.wind.x * influence * 0.3;
-          petal.vy += roomState.spring.wind.y * influence * 0.3;
-        }
+        // 重力（有风才会掉）
+        p.vy += 0.07;
 
-        petal.vx += random(-0.05, 0.05);
-        petal.vx += petal.drift;
-        petal.vx *= 0.99;
+        // 风场：离手近风更强
+        const dx = influenceX - p.x;
+        const dy = influenceY - p.y;
+        const d = sqrt(dx*dx + dy*dy);
 
-        petal.x += petal.vx;
-        petal.y += petal.vy;
-        petal.rot += petal.rotSpeed;
-
-        if (petal.y >= groundY) {
-          roomState.spring.groundPetals.push({
-            x: petal.x, y: groundY + random(-2, 5),
-            rot: petal.rot, size: petal.size,
-            alpha: 0.9, color: petal.color,
-          });
-          roomState.spring.airPetals.splice(i, 1);
-
-          if (roomState.spring.groundPetals.length > 2000) {
-            const removeCount = Math.floor(roomState.spring.groundPetals.length * 0.1);
-            roomState.spring.groundPetals.splice(0, removeCount);
-          }
+        if (d < windInfluenceRadius) {
+          const k = (1 - d / windInfluenceRadius) * s.wind.strength;
+          p.vx += s.wind.x * k * 0.035;
+          p.vy += s.wind.y * k * 0.035;
         } else {
-          if (petal.x < -20) petal.x = width + 20;
-          if (petal.x > width + 20) petal.x = -20;
-          if (petal.y < -50 || petal.y > height + 50) roomState.spring.airPetals.splice(i, 1);
+          // 全局风（弱一点）
+          p.vx += s.wind.x * s.wind.strength * 0.002;
+          p.vy += s.wind.y * s.wind.strength * 0.002;
         }
+
+        // 少量空气阻尼（真实一点）
+        p.vx *= 0.985;
+        p.vy *= 0.992;
+
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rot += p.rotSpeed;
+
+        // 落地
+        if (p.y >= groundY) {
+          s.groundPetals.push({
+            x: p.x,
+            y: groundY + random(-1, 6),
+            rot: p.rot,
+            size: p.size * random(0.85, 1.15),
+            alpha: 0.85,
+            color: p.color
+          });
+          s.airPetals.splice(i, 1);
+
+          if (s.groundPetals.length > 2500) {
+            s.groundPetals.splice(0, Math.floor(s.groundPetals.length * 0.12));
+          }
+          continue;
+        }
+
+        // 环绕
+        if (p.x < -40) p.x = width + 40;
+        if (p.x > width + 40) p.x = -40;
+        if (p.y < -80) p.y = -80;
       }
 
-      const maxAirPetals = 180;
-      while (roomState.spring.airPetals.length < maxAirPetals && frameCount % 3 === 0) spawnSpringPetal();
+      // 有风时地面花瓣才会轻微滚动
+      for (let gp of s.groundPetals) {
+        if (random() > 0.992) gp.x += s.wind.x * 0.02 * random(0.4, 1.0);
+      }
 
-      for (let gp of roomState.spring.groundPetals) if (random() > 0.98) gp.x += random(-0.5, 0.5);
-
-      updateAmbientParticles(roomState.spring.ambientParticles);
+      updateAmbientParticles(s.ambientParticles);
     }
 
     function drawSpring() {
-      for (let i = 0; i < height; i++) {
-        const inter = map(i, 0, height, 0, 1);
-        const c = lerpColor(color(180, 220, 255), color(255, 240, 220), inter);
-        stroke(c); line(0, i, width, i);
-      }
+      const s = roomState.spring;
 
-      drawTechGrid(60, 10);
-      drawAmbientParticles(roomState.spring.ambientParticles);
-      drawStageBoundary();
+      // 背景：天空 + 远景树林 + 湖
+      drawSpringScenery();
 
-      fill(100, 180, 100, 120); noStroke();
+      // 地面
+      noStroke();
+      fill(120, 150, 120, 210);
       rect(0, height * 0.72, width, height * 0.28);
 
-      for (let gp of roomState.spring.groundPetals) {
+      // 地面花瓣
+      for (let gp of s.groundPetals) {
         push();
-        translate(gp.x, gp.y); rotate(gp.rot);
-        fill(gp.color[0], gp.color[1], gp.color[2], gp.alpha * 200);
-        noStroke(); ellipse(0, 0, gp.size * 0.8, gp.size * 1.2);
+        translate(gp.x, gp.y);
+        rotate(gp.rot);
+        fill(255, 220, 235, gp.alpha * 170);
+        noStroke();
+        ellipse(0, 0, gp.size * 0.9, gp.size * 1.4);
         pop();
       }
 
-      const treeX = width / 2;
-      const trunkBase = height * 0.72;
-      const trunkTop = height * 0.45;
-      const swayOffset = sin(frameCount * 0.02) * 3;
+      // 樱花树（更有体量）
+      drawCherryTreeBody();
 
-      push();
-      fill(80, 60, 50, 200); noStroke();
-      rect(treeX - 15, trunkTop, 30, trunkBase - trunkTop);
+      // 树冠花团（静止也"像盛开"，不需要粒子乱飞）
+      drawCherryCanopyClusters();
 
-      stroke(90, 70, 60, 200); strokeWeight(8); noFill();
-      beginShape();
-      vertex(treeX, trunkTop + 20);
-      bezierVertex(treeX - 40 + swayOffset, trunkTop + 40, treeX - 80 + swayOffset, trunkTop + 60, treeX - 110 + swayOffset, trunkTop + 100);
-      endShape();
+      // 空中花瓣（只有有风时才会动；无风时 updateSpring 已经硬冻结）
+      for (let p of s.airPetals) {
+        push();
+        translate(p.x, p.y);
+        rotate(p.rot);
 
-      beginShape();
-      vertex(treeX, trunkTop + 20);
-      bezierVertex(treeX + 40 - swayOffset, trunkTop + 40, treeX + 80 - swayOffset, trunkTop + 60, treeX + 110 - swayOffset, trunkTop + 100);
-      endShape();
+        // depth：远处更小更淡
+        const k = lerp(0.65, 1.15, 1 - p.depth);
+        const a = lerp(90, 220, 1 - p.depth);
 
-      strokeWeight(6);
-      beginShape();
-      vertex(treeX, trunkTop + 10);
-      bezierVertex(treeX - 30 + swayOffset * 0.8, trunkTop + 15, treeX - 60 + swayOffset * 0.8, trunkTop + 30, treeX - 85 + swayOffset * 0.8, trunkTop + 55);
-      endShape();
+        fill(p.color[0], p.color[1], p.color[2], a);
+        noStroke();
+        ellipse(0, 0, p.size * 0.9 * k, p.size * 1.5 * k);
+        pop();
+      }
 
-      beginShape();
-      vertex(treeX, trunkTop + 10);
-      bezierVertex(treeX + 30 - swayOffset * 0.8, trunkTop + 15, treeX + 60 - swayOffset * 0.8, trunkTop + 30, treeX + 85 - swayOffset * 0.8, trunkTop + 55);
-      endShape();
+      // 柔光/雾感
+      drawSoftVignette();
+
+      // 顶部信息
+      const windBar = Math.floor(s.wind.strength * 20);
+      const windBarStr = "█".repeat(windBar) + "░".repeat(20 - windBar);
+      drawTopBar("SPRING ENVIRONMENT", `WIND: ${windBarStr}`);
+      drawInstructionPanel("HAND GESTURE", "Wave your hand to create wind and blow petals.");
+    }
+
+    // Spring helper functions
+    function drawSpringScenery(){
+      // Sky gradient
+      for (let y = 0; y < height; y++) {
+        const t = y / height;
+        const c = lerpColor(color(195, 220, 245), color(240, 245, 250), t);
+        stroke(c);
+        line(0, y, width, y);
+      }
+
+      // Distant trees band
+      noStroke();
+      fill(30, 55, 45, 170);
+      rect(0, height*0.42, width, height*0.06);
+      for(let i=0;i<120;i++){
+        const x = (i/120)*width;
+        const h = random(height*0.03, height*0.10);
+        fill(20, 45, 35, 160);
+        rect(x, height*0.42 - h, random(8,22), h);
+      }
+
+      // Lake
+      for (let y = Math.floor(height*0.48); y < Math.floor(height*0.72); y++) {
+        const t = (y - height*0.48) / (height*0.24);
+        const c = lerpColor(color(150, 175, 185), color(120, 150, 160), t);
+        stroke(c);
+        line(0, y, width, y);
+      }
+
+      // subtle water ripples
+      noFill();
+      stroke(255,255,255,22);
+      for(let i=0;i<14;i++){
+        const yy = height*0.52 + i*random(8,16);
+        beginShape();
+        for(let x=0;x<=width;x+=30){
+          vertex(x, yy + sin((x*0.01)+frameCount*0.02+i)*2);
+        }
+        endShape();
+      }
+    }
+
+    function drawCherryTreeBody(){
+      const treeX = width * 0.36;
+      const baseY = height * 0.72;
+      const topY  = height * 0.30;
+
+      // trunk shading
+      noStroke();
+      for(let i=0;i<16;i++){
+        const t = i/15;
+        fill(55 + t*20, 40 + t*18, 35 + t*14, 220);
+        const w = lerp(74, 26, t);
+        rect(treeX - w/2, lerp(baseY, topY, t), w, (baseY-topY)/16 + 2, 18);
+      }
+
+      // main branches
+      stroke(70,55,45,220);
+      strokeWeight(10);
+      noFill();
+      bezier(treeX, topY+40, treeX-40, topY+70, treeX-90, topY+120, treeX-160, topY+170);
+      bezier(treeX, topY+40, treeX+60, topY+80, treeX+130, topY+130, treeX+220, topY+160);
 
       strokeWeight(7);
-      beginShape();
-      vertex(treeX, trunkTop);
-      bezierVertex(treeX + swayOffset, trunkTop - 20, treeX + swayOffset * 1.2, trunkTop - 40, treeX + swayOffset * 1.5, trunkTop - 60);
-      endShape();
-      pop();
+      bezier(treeX-10, topY+70, treeX-40, topY+90, treeX-80, topY+110, treeX-120, topY+140);
+      bezier(treeX+20, topY+80, treeX+70, topY+95, treeX+120, topY+120, treeX+160, topY+140);
+    }
+
+    function drawCherryCanopyClusters(){
+      // 用"花团"堆体量（像照片那样一大团粉色）
+      const cx = width*0.55;
+      const cy = height*0.36;
+
+      // 大团 + 边缘小团
+      const clusters = [
+        {x:cx-180,y:cy-40,r:170},
+        {x:cx-40, y:cy-80,r:190},
+        {x:cx+130,y:cy-30,r:200},
+        {x:cx+250,y:cy+30,r:170},
+        {x:cx+60, y:cy+70,r:210},
+        {x:cx-110,y:cy+80,r:190},
+      ];
 
       noStroke();
-      for (let i = 0; i < 200; i++) {
-        const cx = treeX + random(-130, 130) + swayOffset * random(-0.5, 0.5);
-        const cy = trunkTop + random(-70, 120);
-        const d = dist(cx, cy, treeX, trunkTop + 25);
-        if (d < 140) {
-          fill(255, random(210, 230), random(220, 240), random(150, 220));
-          circle(cx, cy, random(3, 7));
+      for(const c of clusters){
+        for(let i=0;i<420;i++){
+          const a = random(TWO_PI);
+          const rr = pow(random(), 0.55) * c.r;
+          const x = c.x + cos(a)*rr;
+          const y = c.y + sin(a)*rr*0.75;
+
+          // 颜色：淡粉到偏白
+          const p = random();
+          const col = p < 0.55 ? color(255, 235, 245, 135) : color(255, 220, 235, 155);
+          fill(col);
+
+          const sz = random(2.2, 5.5);
+          circle(x, y, sz);
+
+          // 少量高光点（像阳光打在花上）
+          if (random() > 0.985) {
+            fill(255,255,255,160);
+            circle(x+random(-2,2), y+random(-2,2), sz*0.8);
+          }
         }
       }
 
-      for (let petal of roomState.spring.airPetals) {
-        push(); translate(petal.x, petal.y); rotate(petal.rot);
-        fill(petal.color[0], petal.color[1], petal.color[2], 220);
-        noStroke(); ellipse(0, 0, petal.size, petal.size * 1.4);
-        pop();
-      }
-
-      drawSoftVignette();
-
-      const windBar = Math.floor(roomState.spring.wind.strength * 20);
-      const windBarStr = "█".repeat(windBar) + "░".repeat(20 - windBar);
-      const statusText = `WIND: ${windBarStr} | AIR: ${roomState.spring.airPetals.length} | GROUND: ${roomState.spring.groundPetals.length}`;
-      drawTopBar("SPRING ENVIRONMENT", statusText);
-
-      drawInstructionPanel("HAND GESTURE", "Wave your hand to create wind and blow petals.");
+      // 轻雾（让边缘更柔）
+      fill(255,255,255,18);
+      rect(0,0,width,height);
     }
 
     // ===========================================
@@ -1136,7 +1091,7 @@
             const dx = h1.center.x - h2.center.x;
             const dy = h1.center.y - h2.center.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-            waveAmplitude = map(dist, 100, 500, 0.5, 2.5, true);
+            waveAmplitude = map(dist, 80, 520, 0.3, 4.0, true);
           }
         }
 
@@ -1158,7 +1113,7 @@
             const dx = (nx * 2 - 1) - mx;
             const dy = (ny * 2 - 1) - my;
             const d = sqrt(dx*dx + dy*dy);
-            z += max(0, 1 - d * 1.8) * 60;
+            z += max(0, 1 - d * 1.2) * 140;
 
             const px = (x - cols / 2) * sx;
             const py = (y - rows / 2) * sy;
@@ -1229,7 +1184,7 @@
           for (let apple of roomState.autumn.apples) {
             if (!apple.picked && !apple.falling) {
               const d = dist(hand.center.x, hand.center.y, apple.x, apple.y);
-              if (d < minDist && d < 80) {
+              if (d < minDist && d < 140) {
                 minDist = d;
                 nearest = apple;
               }
@@ -1349,7 +1304,7 @@
         for (let hand of window.handData.hands) {
           if (hand.velocity.speed > 3) {
             const intensity = Math.min(1, hand.velocity.speed / 30);
-            for (let i = 0; i < Math.floor(intensity * 5); i++) {
+            for (let i = 0; i < Math.floor(intensity * 14); i++) {
               roomState.winter.traces.push({
                 x: hand.center.x + random(-10, 10),
                 y: hand.center.y + random(-10, 10),
@@ -1387,7 +1342,7 @@
       for (let tr of roomState.winter.traces) {
         fill(150, 200, 255, tr.life * 150);
         noStroke();
-        circle(tr.x, tr.y, 15);
+        circle(tr.x, tr.y, 32);
       }
 
       fill(255, 255, 255, 180); noStroke();
@@ -1438,8 +1393,6 @@
         if (e.key === "Escape" && currentState !== "hub") setState("hub");
       });
 
-      initializeCameraPreview();
-
       console.log("✅ Hub initialized successfully!");
     }
 
@@ -1455,9 +1408,6 @@
       } else if (currentState === "winter") {
         updateWinter(); drawWinter();
       }
-
-      updateDebugOverlay();
-      drawHandPreview();
     }
 
     function drawHub() {
