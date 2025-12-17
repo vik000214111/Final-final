@@ -2,57 +2,82 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>Particle Cloud Hub - Multi-Screen Portal</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
   <style>
-    body {
-      margin: 0;
-      padding: 0;
+    body { margin:0; overflow:hidden; background:#000; font-family:"Courier New", monospace; }
+    #info{
+      position:absolute; top:20px; left:20px;
+      color:rgba(100,200,255,.6); font-size:12px;
+      pointer-events:none; z-index:2001;
+    }
+    #backButton{
+      position:absolute; top:20px; left:20px;
+      padding:10px 20px;
+      background:rgba(100,200,255,.2);
+      border:2px solid rgba(100,200,255,.6);
+      color:rgba(100,200,255,.9);
+      font-family:"Courier New", monospace;
+      font-size:14px; cursor:pointer;
+      z-index:3000; display:none;
+      transition:all .25s;
+      pointer-events:auto;
+    }
+    #backButton:hover{ background:rgba(100,200,255,.4); border-color:rgba(100,200,255,1); }
+    #debugOverlay{
+      position:absolute; top:20px; right:20px;
+      color:rgba(100,200,255,.8); font-size:10px;
+      font-family:"Courier New", monospace;
+      pointer-events:none; z-index:2001;
+      background:rgba(0,0,0,.5); padding:8px;
+      border:1px solid rgba(100,200,255,.3);
+    }
+    #camBox{
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      width: 220px;
+      height: 150px;
+      border: 2px solid rgba(100,200,255,.6);
+      background: rgba(0,0,0,.35);
+      z-index: 4000;
+      border-radius: 10px;
       overflow: hidden;
-      background: #000;
-      font-family: 'Courier New', monospace;
+      backdrop-filter: blur(6px);
     }
-    #info {
-      position: absolute;
-      top: 20px;
-      left: 20px;
-      color: rgba(100, 200, 255, 0.6);
-      font-size: 12px;
-      pointer-events: none;
-      z-index: 1001;
+    #camVideo, #camOverlay{
+      position:absolute;
+      left:0; top:0;
+      width:100%;
+      height:100%;
+      object-fit: cover;
     }
-    #backButton {
-      position: absolute;
-      top: 20px;
-      left: 20px;
-      padding: 10px 20px;
-      background: rgba(100, 200, 255, 0.2);
-      border: 2px solid rgba(100, 200, 255, 0.6);
-      color: rgba(100, 200, 255, 0.9);
-      font-family: 'Courier New', monospace;
-      font-size: 14px;
-      cursor: pointer;
-      z-index: 1001;
-      display: none;
-      transition: all 0.3s;
+    #camOverlay{ pointer-events:none; }
+    #camLabel{
+      position:absolute;
+      left:8px; top:6px;
+      font-size: 11px;
+      color: rgba(100,200,255,.9);
+      background: rgba(0,0,0,.35);
+      padding: 3px 6px;
+      border-radius: 6px;
     }
-    #backButton:hover {
-      background: rgba(100, 200, 255, 0.4);
-      border-color: rgba(100, 200, 255, 1);
-    }
-    #gestureInstructions { display:none; }
   </style>
 </head>
-
 <body>
   <div id="info">Hover over portals to interact • Click to enter season realms</div>
   <button id="backButton">← BACK TO HUB</button>
-  <div id="gestureInstructions"></div>
-  <video id="webcam" style="display: none;" playsinline></video>
+  <div id="debugOverlay"></div>
+  <video id="webcam" style="display:none;" playsinline></video>
+
+  <div id="camBox">
+    <video id="camVideo" autoplay playsinline muted></video>
+    <canvas id="camOverlay"></canvas>
+    <div id="camLabel">CAM • HANDS</div>
+  </div>
 
   <script>
     // ===========================================
@@ -62,20 +87,15 @@
       TREE_PARTICLE_COUNT: 2500,
       PARTICLE_SIZE_MIN: 1.5,
       PARTICLE_SIZE_MAX: 3.5,
-
       PULSE_SPEED: 0.015,
       PULSE_AMOUNT: 0.4,
-
       CONNECTION_COUNT: 150,
       CONNECTION_DISTANCE: 45,
       CONNECTION_ALPHA: 0.3,
-
       DUST_COUNT: 200,
       DUST_SPEED: 0.3,
-
       MOUSE_FIELD_RADIUS: 180,
       MOUSE_FIELD_STRENGTH: 15,
-
       PARTICLE_COLOR: [100, 200, 255],
       DUST_COLOR: [150, 180, 200],
       CONNECTION_COLOR: [80, 160, 220],
@@ -84,7 +104,7 @@
     // ===========================================
     // STATE
     // ===========================================
-    let currentState = "hub"; // hub | spring | summer | autumn | winter
+    let currentState = "hub"; // "hub" | "spring" | "summer" | "autumn" | "winter"
 
     function setState(newState) {
       console.log(`Switching state: ${currentState} → ${newState}`);
@@ -103,6 +123,9 @@
       }
     }
 
+    // ===========================================
+    // GLOBALS
+    // ===========================================
     let treeParticles = [];
     let dustParticles = [];
     let connections = [];
@@ -110,75 +133,310 @@
     let timeOffset = 0;
     let mouseFieldActive = false;
 
-    // MediaPipe Hands
-    let handLandmarks = null;
-    let lastLogTime = 0;
+    // MediaPipe Hands - Global handData object
+    window.handData = null;
+    let prevHandCenters = []; // For velocity calculation
+    let cameraReady = false;
+    let handsInstance = null;
+
+    // Camera preview
+    let camVideoEl, camOverlayEl, camCtx;
+
+    // ===========================================
+    // CAMERA PREVIEW WINDOW
+    // ===========================================
+    function initializeCameraPreview(){
+      camVideoEl = document.getElementById('camVideo');
+      camOverlayEl = document.getElementById('camOverlay');
+      camCtx = camOverlayEl.getContext('2d');
+
+      // canvas 像素尺寸和容器同步（避免糊）
+      function syncOverlaySize(){
+        const w = camOverlayEl.clientWidth;
+        const h = camOverlayEl.clientHeight;
+        camOverlayEl.width = Math.floor(w * devicePixelRatio);
+        camOverlayEl.height = Math.floor(h * devicePixelRatio);
+        camCtx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+      }
+      syncOverlaySize();
+      window.addEventListener('resize', syncOverlaySize);
+
+      // 摄像头（如果已经在 MediaPipe 初始化里拿到了 stream，可把 stream 直接赋给 camVideoEl.srcObject）
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio:false })
+        .then(stream => {
+          camVideoEl.srcObject = stream;
+          camVideoEl.play();
+        })
+        .catch(err => {
+          console.warn("Camera permission failed for preview:", err);
+          // 失败时也保留框，但显示提示
+          camCtx.clearRect(0,0,camOverlayEl.width,camOverlayEl.height);
+          camCtx.fillStyle = "rgba(0,0,0,.6)";
+          camCtx.fillRect(0,0,220,150);
+          camCtx.fillStyle = "rgba(100,200,255,.9)";
+          camCtx.font = "12px Courier New";
+          camCtx.fillText("Camera blocked", 12, 72);
+        });
+    }
+
+    function drawHandPreview(){
+      if(!camCtx || !camOverlayEl) return;
+
+      const W = camOverlayEl.clientWidth;
+      const H = camOverlayEl.clientHeight;
+
+      camCtx.clearRect(0,0,W,H);
+
+      // 没检测到手时画个轻提示
+      const data = window.handData || null;
+      if(!data || !data.hands || data.hands.length === 0){
+        camCtx.fillStyle = "rgba(100,200,255,.55)";
+        camCtx.font = "11px Courier New";
+        camCtx.fillText("No hands", 10, H - 10);
+        return;
+      }
+
+      // 手的骨架连线（MediaPipe 21点索引）
+      const edges = [
+        [0,1],[1,2],[2,3],[3,4],          // thumb
+        [0,5],[5,6],[6,7],[7,8],          // index
+        [0,9],[9,10],[10,11],[11,12],     // middle
+        [0,13],[13,14],[14,15],[15,16],   // ring
+        [0,17],[17,18],[18,19],[19,20],   // pinky
+        [5,9],[9,13],[13,17]              // palm
+      ];
+
+      for(const hand of data.hands){
+        // keypointsPx 是相对于"原始视频像素"的；我们要映射到小窗尺寸
+        const kp = hand.keypointsPx;
+        if(!kp || kp.length !== 21) continue;
+
+        // ✅ 视频实际尺寸
+        const vw = camVideoEl.videoWidth || 640;
+        const vh = camVideoEl.videoHeight || 480;
+
+        // ✅ 镜像：前置摄像头常见"镜像显示"，为了让小窗像自拍一样
+        const mirror = true;
+
+        function mapPt(p){
+          let x = (p.x / vw) * W;
+          let y = (p.y / vh) * H;
+          if(mirror) x = W - x;
+          return {x,y};
+        }
+
+        // 连线
+        camCtx.strokeStyle = "rgba(100,200,255,.7)";
+        camCtx.lineWidth = 1.2;
+        camCtx.beginPath();
+        for(const [a,b] of edges){
+          const A = mapPt(kp[a]);
+          const B = mapPt(kp[b]);
+          camCtx.moveTo(A.x, A.y);
+          camCtx.lineTo(B.x, B.y);
+        }
+        camCtx.stroke();
+
+        // 关键点
+        camCtx.fillStyle = "rgba(180,240,255,.9)";
+        for(let i=0;i<21;i++){
+          const P = mapPt(kp[i]);
+          camCtx.beginPath();
+          camCtx.arc(P.x, P.y, 2.2, 0, Math.PI*2);
+          camCtx.fill();
+        }
+
+        // pinch 状态 + speed
+        camCtx.fillStyle = hand.pinch?.isPinching ? "rgba(255,180,200,.95)" : "rgba(100,200,255,.85)";
+        camCtx.font = "10px Courier New";
+        const s = (hand.velocity?.speed ?? 0).toFixed(1);
+        camCtx.fillText(`${hand.handedness || "Hand"} | pinch:${hand.pinch?.isPinching ? "Y":"N"} | v:${s}`, 8, 14);
+      }
+    }
 
     // ===========================================
     // MEDIAPIPE HANDS INITIALIZATION
     // ===========================================
-    function onHandResults(results) {
-      handLandmarks = results.multiHandLandmarks && results.multiHandLandmarks.length > 0
-        ? results.multiHandLandmarks
-        : null;
-
-      // Console log every second
-      const now = Date.now();
-      if (now - lastLogTime >= 1000) {
-        lastLogTime = now;
-        if (handLandmarks) {
-          const simplified = handLandmarks.map((hand, idx) => ({
-            hand: idx,
-            landmarks: hand.length,
-            wrist: hand[0],
-            indexTip: hand[8],
-            thumbTip: hand[4]
-          }));
-          console.log("Hand Data:", JSON.stringify(simplified, null, 2));
-        } else {
-          console.log("Hand Data: No hands detected");
-        }
+    function calculateHandCenter(landmarks) {
+      // Use wrist (0) and palm base points (1, 5, 9, 13, 17)
+      const indices = [0, 1, 5, 9, 13, 17];
+      let sumX = 0, sumY = 0, sumZ = 0;
+      for (let idx of indices) {
+        sumX += landmarks[idx].x;
+        sumY += landmarks[idx].y;
+        sumZ += landmarks[idx].z;
       }
+      return {
+        x: sumX / indices.length,
+        y: sumY / indices.length,
+        z: sumZ / indices.length
+      };
+    }
+
+    function calculatePinch(landmarks) {
+      // Distance between thumb tip (4) and index tip (8)
+      const thumb = landmarks[4];
+      const index = landmarks[8];
+      const dx = thumb.x - index.x;
+      const dy = thumb.y - index.y;
+      const dz = thumb.z - index.z;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      // Normalize: typical pinch is < 0.05, open is > 0.15
+      const value = 1 - Math.min(1, Math.max(0, (dist - 0.02) / 0.13));
+      const isPinching = value > 0.7;
+      return { isPinching, value };
+    }
+
+    function calculateOpenness(landmarks) {
+      // Average distance from fingertips (4,8,12,16,20) to palm center
+      const center = calculateHandCenter(landmarks);
+      const tips = [4, 8, 12, 16, 20];
+      let totalDist = 0;
+      for (let idx of tips) {
+        const dx = landmarks[idx].x - center.x;
+        const dy = landmarks[idx].y - center.y;
+        totalDist += Math.sqrt(dx*dx + dy*dy);
+      }
+      const avgDist = totalDist / tips.length;
+      // Normalize: closed hand ~0.1, open hand ~0.25
+      return Math.min(1, Math.max(0, (avgDist - 0.1) / 0.15));
+    }
+
+    function onHandResults(results) {
+      const now = performance.now();
+
+      if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+        window.handData = {
+          timestamp: now,
+          hands: [],
+          debug: { fpsHands: 0, hasCamera: cameraReady, errors: null }
+        };
+        prevHandCenters = [];
+        return;
+      }
+
+      const hands = [];
+
+      for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+        const landmarks = results.multiHandLandmarks[i];
+        const handedness = results.multiHandedness && results.multiHandedness[i]
+          ? results.multiHandedness[i].label
+          : "Unknown";
+
+        // Convert to pixel coordinates
+        const keypointsPx = landmarks.map(lm => ({
+          x: lm.x * width,
+          y: lm.y * height
+        }));
+
+        const center = calculateHandCenter(landmarks);
+        const centerPx = { x: center.x * width, y: center.y * height };
+
+        // Calculate velocity
+        let velocity = { x: 0, y: 0, speed: 0 };
+        if (prevHandCenters[i]) {
+          velocity.x = centerPx.x - prevHandCenters[i].x;
+          velocity.y = centerPx.y - prevHandCenters[i].y;
+          velocity.speed = Math.sqrt(velocity.x*velocity.x + velocity.y*velocity.y);
+        }
+
+        const pinch = calculatePinch(landmarks);
+        const openness = calculateOpenness(landmarks);
+
+        hands.push({
+          handedness,
+          landmarks,  // Normalized 0-1
+          keypointsPx,
+          center: centerPx,
+          velocity,
+          pinch,
+          openness
+        });
+
+        prevHandCenters[i] = centerPx;
+      }
+
+      // Remove extra prevCenters if hands decreased
+      prevHandCenters = prevHandCenters.slice(0, hands.length);
+
+      window.handData = {
+        timestamp: now,
+        hands,
+        debug: {
+          fpsHands: Math.round(frameRate()),
+          hasCamera: cameraReady,
+          errors: null
+        }
+      };
     }
 
     async function initMediaPipeHands() {
-      const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-      });
-
-      hands.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.6,
-        minTrackingConfidence: 0.6
-      });
-
-      hands.onResults(onHandResults);
-
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        // Check for HTTPS
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+          throw new Error('Camera requires HTTPS or localhost. Use a local server (e.g., VSCode Live Server)');
+        }
+
+        // Initialize Hands
+        handsInstance = new Hands({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        handsInstance.setOptions({
+          maxNumHands: 2,
+          modelComplexity: 1,
+          minDetectionConfidence: 0.6,
+          minTrackingConfidence: 0.6
+        });
+
+        handsInstance.onResults(onHandResults);
+
+        // Get webcam
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            facingMode: 'user'
+          }
+        });
+
         const videoElement = document.getElementById('webcam');
         videoElement.srcObject = stream;
         await videoElement.play();
 
+        cameraReady = true;
+
+        // Start camera loop
         const camera = new Camera(videoElement, {
           onFrame: async () => {
-            await hands.send({ image: videoElement });
+            if (handsInstance) {
+              await handsInstance.send({ image: videoElement });
+            }
           },
-          width: 640,
-          height: 480
+          width: 1280,
+          height: 720
         });
         camera.start();
 
-        console.log("MediaPipe Hands initialized successfully!");
+        console.log('✅ MediaPipe Hands initialized successfully!');
+
       } catch (err) {
-        console.error("Failed to initialize MediaPipe Hands:", err);
+        console.error('❌ Failed to initialize MediaPipe Hands:', err);
+        window.handData = {
+          timestamp: performance.now(),
+          hands: [],
+          debug: {
+            fpsHands: 0,
+            hasCamera: false,
+            errors: err.message
+          }
+        };
       }
     }
 
-    // Initialize MediaPipe after page loads
+    // Initialize after page loads
     window.addEventListener('load', () => {
-      setTimeout(initMediaPipeHands, 1000);
+      setTimeout(initMediaPipeHands, 500);
     });
 
     // ===========================================
@@ -280,16 +538,15 @@
             vx: cos(angle) * 0.5,
             vy: sin(angle) * 0.5,
             life: 1.0,
-            size: random(2, 4)
+            size: random(2, 4),
           });
         }
 
         for (let i = this.glowParticles.length - 1; i >= 0; i--) {
-          const gp = this.glowParticles[i];
-          gp.x += gp.vx;
-          gp.y += gp.vy;
-          gp.life -= 0.02;
-          if (gp.life <= 0) this.glowParticles.splice(i, 1);
+          let p = this.glowParticles[i];
+          p.x += p.vx; p.y += p.vy;
+          p.life -= 0.02;
+          if (p.life <= 0) this.glowParticles.splice(i, 1);
         }
       }
 
@@ -325,24 +582,20 @@
         pop();
       }
 
-      click() {
-        if (this.hovered) setState(this.season);
-      }
+      click() { if (this.hovered) setState(this.season); }
     }
 
     // ===========================================
-    // HUB GENERATION
+    // GENERATORS
     // ===========================================
     function generateTreePoints() {
       const branches = [];
       const particles = [];
-
       const trunkBase = { x: width / 2, y: height * 0.85 };
       const trunkTop  = { x: width / 2, y: height * 0.45 };
 
       function createBranch(x1, y1, angle, length, depth) {
         if (depth > 7 || length < 8) return;
-
         const x2 = x1 + cos(angle) * length;
         const y2 = y1 + sin(angle) * length;
 
@@ -377,7 +630,6 @@
           particles.push(new Particle(x, y, size + random(-0.5, 0.5), true));
         }
       }
-
       return particles;
     }
 
@@ -390,7 +642,7 @@
     }
 
     function generateConnections() {
-      const cons = [];
+      const out = [];
       const gridSize = CONFIG.CONNECTION_DISTANCE;
       const grid = {};
 
@@ -398,13 +650,11 @@
         const gx = Math.floor(p.homeX / gridSize);
         const gy = Math.floor(p.homeY / gridSize);
         const key = `${gx},${gy}`;
-        if (!grid[key]) grid[key] = [];
-        grid[key].push(p);
+        (grid[key] ||= []).push(p);
       }
 
       for (let p1 of treeParticles) {
-        if (cons.length >= CONFIG.CONNECTION_COUNT) break;
-
+        if (out.length >= CONFIG.CONNECTION_COUNT) break;
         const gx = Math.floor(p1.homeX / gridSize);
         const gy = Math.floor(p1.homeY / gridSize);
 
@@ -412,31 +662,29 @@
           for (let dy = -1; dy <= 1; dy++) {
             const key = `${gx + dx},${gy + dy}`;
             const neighbors = grid[key] || [];
-
             for (let p2 of neighbors) {
               if (p1 === p2) continue;
               const d = dist(p1.homeX, p1.homeY, p2.homeX, p2.homeY);
               if (d < CONFIG.CONNECTION_DISTANCE) {
-                cons.push({ p1, p2, dist: d });
-                if (cons.length >= CONFIG.CONNECTION_COUNT) return cons;
+                out.push({ p1, p2, dist: d });
+                if (out.length >= CONFIG.CONNECTION_COUNT) return out;
               }
             }
           }
         }
       }
-      return cons;
+      return out;
     }
 
     function setupPortals() {
       const centerX = width / 2;
       const centerY = height * 0.6;
-      const r = Math.min(width, height) * 0.4;
-
+      const radius = Math.min(width, height) * 0.4;
       return [
-        new Portal(centerX - r, centerY - r * 0.3, "SPRING", "spring"),
-        new Portal(centerX + r, centerY - r * 0.3, "SUMMER", "summer"),
-        new Portal(centerX - r, centerY + r * 0.5, "AUTUMN", "autumn"),
-        new Portal(centerX + r, centerY + r * 0.5, "WINTER", "winter"),
+        new Portal(centerX - radius, centerY - radius * 0.3, "SPRING", "spring"),
+        new Portal(centerX + radius, centerY - radius * 0.3, "SUMMER", "summer"),
+        new Portal(centerX - radius, centerY + radius * 0.5, "AUTUMN", "autumn"),
+        new Portal(centerX + radius, centerY + radius * 0.5, "WINTER", "winter"),
       ];
     }
 
@@ -450,10 +698,11 @@
     function drawHubTree() {
       stroke(CONFIG.CONNECTION_COLOR[0], CONFIG.CONNECTION_COLOR[1], CONFIG.CONNECTION_COLOR[2], CONFIG.CONNECTION_ALPHA * 255);
       strokeWeight(0.5);
-      for (let c of connections) {
-        const a = map(c.dist, 0, CONFIG.CONNECTION_DISTANCE, CONFIG.CONNECTION_ALPHA, 0);
+
+      for (let conn of connections) {
+        const a = map(conn.dist, 0, CONFIG.CONNECTION_DISTANCE, CONFIG.CONNECTION_ALPHA, 0);
         stroke(CONFIG.CONNECTION_COLOR[0], CONFIG.CONNECTION_COLOR[1], CONFIG.CONNECTION_COLOR[2], a * 255);
-        line(c.p1.x, c.p1.y, c.p2.x, c.p2.y);
+        line(conn.p1.x, conn.p1.y, conn.p2.x, conn.p2.y);
       }
       for (let p of treeParticles) p.draw();
     }
@@ -466,20 +715,14 @@
     // ROOM STATE
     // ===========================================
     let roomState = {
-      spring: {
-        airPetals: [],
-        groundPetals: [],
-        wind: { x: 0, y: 0, strength: 0 },
-        ambientParticles: [],
-        prevMouseX: 0,
-        prevMouseY: 0
-      },
-      summer: { wavePoints: [], ambientParticles: [] },
+      spring: { airPetals: [], groundPetals: [], wind: {x:0,y:0,strength:0}, ambientParticles: [], prevMouseX:0, prevMouseY:0 },
+      summer: { ambientParticles: [], gfx: null, cols: 160, rows: 90, t: 0 },
       autumn: { apples: [], basket: null, ambientParticles: [] },
-      winter: { snowParticles: [], traces: [], ambientParticles: [] }
+      winter: { snowParticles: [], traces: [], ambientParticles: [] },
     };
 
     function initializeRoom(room) {
+      console.log(`Initializing ${room} room...`);
       if (room === "spring") initializeSpring();
       if (room === "summer") initializeSummer();
       if (room === "autumn") initializeAutumn();
@@ -487,62 +730,26 @@
     }
 
     // ===========================================
-    // UI HELPERS
+    // UI / FX
     // ===========================================
-    function generateAmbientParticles(count = 30) {
-      const ps = [];
-      for (let i = 0; i < count; i++) {
-        ps.push({
-          x: random(width),
-          y: random(height),
-          vx: random(-0.2, 0.2),
-          vy: random(-0.2, 0.2),
-          size: random(1, 2),
-          alpha: random(0.1, 0.3),
-          phase: random(TWO_PI)
-        });
-      }
-      return ps;
-    }
-
-    function updateAmbientParticles(ps) {
-      for (let p of ps) {
-        p.x += p.vx; p.y += p.vy;
-        if (p.x < 0) p.x = width;
-        if (p.x > width) p.x = 0;
-        if (p.y < 0) p.y = height;
-        if (p.y > height) p.y = 0;
-        p.alpha = 0.2 + sin(frameCount * 0.02 + p.phase) * 0.1;
-      }
-    }
-
-    function drawAmbientParticles(ps) {
-      noStroke();
-      for (let p of ps) {
-        fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], p.alpha * 255);
-        circle(p.x, p.y, p.size);
-      }
-    }
-
-    function drawTechGrid(spacing = 50, opacity = 15) {
+    function drawTechGrid(spacing = 50, opacity = 12) {
       stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], opacity);
       strokeWeight(0.5);
       for (let x = 0; x <= width; x += spacing) line(x, 0, x, height);
       for (let y = 0; y <= height; y += spacing) line(0, y, width, y);
     }
 
-    // Radial vignette using Canvas 2D API gradient (no grey boxes!)
-    function drawVignetteRadial(strength = 0.55) {
-      const ctx = drawingContext;
-      const r0 = Math.min(width, height) * 0.25;
-      const r1 = Math.min(width, height) * 0.75;
-      const g = ctx.createRadialGradient(width/2, height/2, r0, width/2, height/2, r1);
-      g.addColorStop(0, "rgba(0,0,0,0)");
-      g.addColorStop(1, `rgba(0,0,0,${strength})`);
-      ctx.save();
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
+    function drawSoftVignette() {
+      const band = 140;
+      noStroke();
+      for (let i = 0; i < band; i += 6) {
+        const a = map(i, 0, band, 0, 120);
+        fill(0, 0, 0, a * 0.25);
+        rect(0, i, width, 6);
+        rect(0, height - i - 6, width, 6);
+        rect(i, 0, 6, height);
+        rect(width - i - 6, 0, 6, height);
+      }
     }
 
     function drawStageBoundary() {
@@ -557,241 +764,118 @@
       strokeWeight(1);
       rect(stageX, stageY, stageWidth, stageHeight);
 
-      const cornerSize = 15;
+      const c = 15;
       strokeWeight(2);
-      line(stageX, stageY, stageX + cornerSize, stageY);
-      line(stageX, stageY, stageX, stageY + cornerSize);
-
-      line(stageX + stageWidth, stageY, stageX + stageWidth - cornerSize, stageY);
-      line(stageX + stageWidth, stageY, stageX + stageWidth, stageY + cornerSize);
-
-      line(stageX, stageY + stageHeight, stageX + cornerSize, stageY + stageHeight);
-      line(stageX, stageY + stageHeight, stageX, stageY + stageHeight - cornerSize);
-
-      line(stageX + stageWidth, stageY + stageHeight, stageX + stageWidth - cornerSize, stageY + stageHeight);
-      line(stageX + stageWidth, stageY + stageHeight, stageX + stageWidth, stageY + stageHeight - cornerSize);
+      line(stageX, stageY, stageX + c, stageY);
+      line(stageX, stageY, stageX, stageY + c);
+      line(stageX + stageWidth, stageY, stageX + stageWidth - c, stageY);
+      line(stageX + stageWidth, stageY, stageX + stageWidth, stageY + c);
+      line(stageX, stageY + stageHeight, stageX + c, stageY + stageHeight);
+      line(stageX, stageY + stageHeight, stageX, stageY + stageHeight - c);
+      line(stageX + stageWidth, stageY + stageHeight, stageX + stageWidth - c, stageY + stageHeight);
+      line(stageX + stageWidth, stageY + stageHeight, stageX + stageWidth, stageY + stageHeight - c);
       pop();
     }
 
     function drawTopBar(roomTitle, statusText) {
       push();
-      fill(0, 0, 0, 150);
-      noStroke();
+      fill(0, 0, 0, 150); noStroke();
       rect(0, 0, width, 60);
-
       stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 100);
-      strokeWeight(1);
-      line(0, 60, width, 60);
+      strokeWeight(1); line(0, 60, width, 60);
 
       fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 220);
-      noStroke();
-      textAlign(LEFT, CENTER);
-      textSize(20);
+      noStroke(); textAlign(LEFT, CENTER); textSize(20);
       text(roomTitle, 80, 30);
 
       stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 150);
-      strokeWeight(2);
-      line(70, 20, 70, 40);
+      strokeWeight(2); line(70, 20, 70, 40);
 
       fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 150);
-      noStroke();
-      textAlign(RIGHT, CENTER);
-      textSize(11);
+      noStroke(); textAlign(RIGHT, CENTER); textSize(11);
       text(statusText, width - 20, 30);
-
       pop();
     }
 
     function drawInstructionPanel(title, instruction) {
       push();
-
-      const panelWidth = 280;
-      const panelHeight = 80;
-      const panelX = width - panelWidth - 20;
-      const panelY = height - panelHeight - 20;
+      const w = 280, h = 80, x = width - w - 20, y = height - h - 20;
 
       fill(0, 0, 0, 180);
       stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 120);
       strokeWeight(1);
-      rect(panelX, panelY, panelWidth, panelHeight, 5);
+      rect(x, y, w, h, 5);
 
       noFill();
       stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 40);
       strokeWeight(2);
-      rect(panelX - 2, panelY - 2, panelWidth + 4, panelHeight + 4, 5);
+      rect(x - 2, y - 2, w + 4, h + 4, 5);
 
       fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 30);
       noStroke();
-      rect(panelX, panelY, panelWidth, 25, 5, 5, 0, 0);
+      rect(x, y, w, 25, 5, 5, 0, 0);
 
       fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 220);
-      textAlign(LEFT, CENTER);
-      textSize(12);
-      text(title, panelX + 10, panelY + 12);
+      textAlign(LEFT, CENTER); textSize(12);
+      text(title, x + 10, y + 12);
 
       fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 180);
-      textSize(10);
-      textAlign(LEFT, TOP);
-      text(instruction, panelX + 10, panelY + 32, panelWidth - 20);
-
+      textAlign(LEFT, TOP); textSize(10);
+      text(instruction, x + 10, y + 32, w - 20);
       pop();
     }
 
-    // ===========================================
-    // MEDIAPIPE DEBUG OVERLAY & DATA PANEL
-    // ===========================================
-    // MediaPipe hand landmark connections (21 points skeleton)
-    const HAND_CONNECTIONS = [
-      [0, 1], [1, 2], [2, 3], [3, 4],           // Thumb
-      [0, 5], [5, 6], [6, 7], [7, 8],           // Index
-      [0, 9], [9, 10], [10, 11], [11, 12],      // Middle
-      [0, 13], [13, 14], [14, 15], [15, 16],    // Ring
-      [0, 17], [17, 18], [18, 19], [19, 20],    // Pinky
-      [5, 9], [9, 13], [13, 17]                 // Palm
-    ];
-
-    function drawHandDebugOverlay() {
-      if (!handLandmarks) return;
-
-      push();
-      for (let hand of handLandmarks) {
-        // Draw skeleton connections
-        stroke(100, 200, 255, 180);
-        strokeWeight(2);
-        for (let [i, j] of HAND_CONNECTIONS) {
-          const p1 = hand[i];
-          const p2 = hand[j];
-          line(p1.x * width, p1.y * height, p2.x * width, p2.y * height);
-        }
-
-        // Draw 21 landmark points
-        noStroke();
-        for (let i = 0; i < hand.length; i++) {
-          const lm = hand[i];
-          const px = lm.x * width;
-          const py = lm.y * height;
-
-          // Color code: wrist=red, fingertips=green, others=cyan
-          if (i === 0) {
-            fill(255, 100, 100, 220);  // Wrist
-          } else if ([4, 8, 12, 16, 20].includes(i)) {
-            fill(100, 255, 100, 220);  // Fingertips
-          } else {
-            fill(100, 200, 255, 220);  // Other joints
-          }
-          circle(px, py, 8);
-
-          // Label key points
-          if (i === 0 || [4, 8, 12, 16, 20].includes(i)) {
-            fill(255, 255, 255, 200);
-            textSize(9);
-            textAlign(CENTER, CENTER);
-            text(i, px, py - 12);
-          }
-        }
+    function generateAmbientParticles(count=30){
+      const ps=[];
+      for(let i=0;i<count;i++){
+        ps.push({ x:random(width), y:random(height), vx:random(-0.2,0.2), vy:random(-0.2,0.2), size:random(1,2), alpha:random(0.1,0.3), phase:random(TWO_PI) });
       }
-      pop();
+      return ps;
     }
-
-    function calculatePalmCenter(hand) {
-      // Palm center = average of wrist + 4 palm base points
-      const palmIndices = [0, 1, 5, 9, 13, 17];
-      let sumX = 0, sumY = 0;
-      for (let i of palmIndices) {
-        sumX += hand[i].x;
-        sumY += hand[i].y;
+    function updateAmbientParticles(ps){
+      for(let p of ps){
+        p.x+=p.vx; p.y+=p.vy;
+        if(p.x<0) p.x=width; if(p.x>width) p.x=0;
+        if(p.y<0) p.y=height; if(p.y>height) p.y=0;
+        p.alpha = 0.2 + sin(frameCount*0.02 + p.phase)*0.1;
       }
-      return { x: sumX / palmIndices.length, y: sumY / palmIndices.length };
     }
-
-    function calculatePinchStrength(hand) {
-      // Distance between thumb tip (4) and index tip (8)
-      const thumb = hand[4];
-      const index = hand[8];
-      const dx = thumb.x - index.x;
-      const dy = thumb.y - index.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      // Normalize: closer = stronger pinch (invert and clamp)
-      return Math.max(0, Math.min(1, 1 - dist * 15));
-    }
-
-    function calculateHandDistance(hand1, hand2) {
-      const c1 = calculatePalmCenter(hand1);
-      const c2 = calculatePalmCenter(hand2);
-      const dx = c1.x - c2.x;
-      const dy = c1.y - c2.y;
-      return Math.sqrt(dx * dx + dy * dy);
-    }
-
-    function drawGestureDataPanel() {
-      push();
-
-      const panelWidth = 280;
-      const panelHeight = 140;
-      const panelX = 20;
-      const panelY = height - panelHeight - 20;
-
-      // Panel background
-      fill(0, 0, 0, 180);
-      stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 120);
-      strokeWeight(1);
-      rect(panelX, panelY, panelWidth, panelHeight, 5);
-
-      // Outer glow
-      noFill();
-      stroke(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 40);
-      strokeWeight(2);
-      rect(panelX - 2, panelY - 2, panelWidth + 4, panelHeight + 4, 5);
-
-      // Header
-      fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 30);
+    function drawAmbientParticles(ps){
       noStroke();
-      rect(panelX, panelY, panelWidth, 25, 5, 5, 0, 0);
+      for(let p of ps){
+        fill(CONFIG.PARTICLE_COLOR[0],CONFIG.PARTICLE_COLOR[1],CONFIG.PARTICLE_COLOR[2], p.alpha*255);
+        circle(p.x,p.y,p.size);
+      }
+    }
 
-      fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 220);
-      textAlign(LEFT, CENTER);
-      textSize(12);
-      text("GESTURE DATA", panelX + 10, panelY + 12);
+    function updateDebugOverlay() {
+      const overlay = document.getElementById('debugOverlay');
+      if (!window.handData) {
+        overlay.innerHTML = 'HandData: Initializing...';
+        return;
+      }
 
-      // Data content
-      fill(CONFIG.PARTICLE_COLOR[0], CONFIG.PARTICLE_COLOR[1], CONFIG.PARTICLE_COLOR[2], 180);
-      textSize(10);
-      textAlign(LEFT, TOP);
+      const d = window.handData;
+      const handsCount = d.hands.length;
 
-      let yOffset = panelY + 35;
-      const lineHeight = 18;
+      let html = `Hands: ${handsCount} | FPS: ${d.debug.fpsHands}<br>`;
 
-      if (handLandmarks && handLandmarks.length > 0) {
-        text(`Hands Count: ${handLandmarks.length}`, panelX + 10, yOffset);
-        yOffset += lineHeight;
-
-        for (let i = 0; i < handLandmarks.length; i++) {
-          const hand = handLandmarks[i];
-          const palmCenter = calculatePalmCenter(hand);
-          const pinchStrength = calculatePinchStrength(hand);
-
-          text(`Hand ${i} Palm: (${(palmCenter.x * width).toFixed(0)}, ${(palmCenter.y * height).toFixed(0)})`, panelX + 10, yOffset);
-          yOffset += lineHeight;
-
-          const pinchBar = Math.floor(pinchStrength * 10);
-          const pinchVis = "█".repeat(pinchBar) + "░".repeat(10 - pinchBar);
-          text(`Hand ${i} Pinch: ${pinchVis} ${(pinchStrength * 100).toFixed(0)}%`, panelX + 10, yOffset);
-          yOffset += lineHeight;
-        }
-
-        if (handLandmarks.length === 2) {
-          const dist = calculateHandDistance(handLandmarks[0], handLandmarks[1]);
-          text(`Hand Distance: ${(dist * 100).toFixed(1)}%`, panelX + 10, yOffset);
-        }
+      if (d.debug.errors) {
+        html += `<span style="color:#f88">⚠ ${d.debug.errors}</span>`;
+      } else if (handsCount > 0) {
+        const h = d.hands[0];
+        html += `Pinch: ${(h.pinch.value * 100).toFixed(0)}% ${h.pinch.isPinching ? '🤏' : ''}<br>`;
+        html += `Speed: ${h.velocity.speed.toFixed(1)}px/f<br>`;
+        html += `Open: ${(h.openness * 100).toFixed(0)}%`;
       } else {
-        text("No hands detected", panelX + 10, yOffset);
+        html += 'No hands detected';
       }
 
-      pop();
+      overlay.innerHTML = html;
     }
 
     // ===========================================
-    // SPRING
+    // SPRING (Hand velocity → wind)
     // ===========================================
     function initializeSpring() {
       roomState.spring.airPetals = [];
@@ -799,7 +883,6 @@
       roomState.spring.wind = { x: 0, y: 0, strength: 0 };
       roomState.spring.prevMouseX = mouseX;
       roomState.spring.prevMouseY = mouseY;
-
       for (let i = 0; i < 60; i++) spawnSpringPetal();
       roomState.spring.ambientParticles = generateAmbientParticles(30);
     }
@@ -816,26 +899,33 @@
         rotSpeed: random(-0.08, 0.08),
         size: random(5, 9),
         drift: random(-0.1, 0.1),
-        color: [255, random(200, 230), random(220, 240)]
+        life: 1.0,
+        color: [255, random(200, 230), random(220, 240)],
       });
     }
 
     function updateSpring() {
-      const mouseVx = mouseX - roomState.spring.prevMouseX;
-      const mouseVy = mouseY - roomState.spring.prevMouseY;
+      // Hand gesture → wind
+      if (window.handData && window.handData.hands.length > 0) {
+        const hand = window.handData.hands[0];
+        const windStrength = Math.min(1, hand.velocity.speed / 20);
+        roomState.spring.wind.x = lerp(roomState.spring.wind.x, hand.velocity.x * 0.5, 0.2);
+        roomState.spring.wind.y = lerp(roomState.spring.wind.y, hand.velocity.y * 0.5, 0.2);
+        roomState.spring.wind.strength = lerp(roomState.spring.wind.strength, windStrength, 0.15);
+      } else {
+        // Fallback to mouse
+        const mouseVx = mouseX - roomState.spring.prevMouseX;
+        const mouseVy = mouseY - roomState.spring.prevMouseY;
+        const rawWindStrength = constrain(sqrt(mouseVx * mouseVx + mouseVy * mouseVy), 0, 20);
+        roomState.spring.wind.x = lerp(roomState.spring.wind.x, mouseVx * 0.5, 0.15);
+        roomState.spring.wind.y = lerp(roomState.spring.wind.y, mouseVy * 0.5, 0.15);
+        roomState.spring.wind.strength = lerp(roomState.spring.wind.strength, rawWindStrength / 20, 0.1);
+      }
+
       roomState.spring.prevMouseX = mouseX;
       roomState.spring.prevMouseY = mouseY;
 
-      const raw = constrain(sqrt(mouseVx * mouseVx + mouseVy * mouseVy), 0, 20);
-      const targetX = mouseVx * 0.5;
-      const targetY = mouseVy * 0.5;
-      const targetS = raw / 20;
-
-      roomState.spring.wind.x = lerp(roomState.spring.wind.x, targetX, 0.15);
-      roomState.spring.wind.y = lerp(roomState.spring.wind.y, targetY, 0.15);
-      roomState.spring.wind.strength = lerp(roomState.spring.wind.strength, targetS, 0.1);
-
-      if (raw < 0.5) {
+      if (roomState.spring.wind.strength < 0.05) {
         roomState.spring.wind.x *= 0.95;
         roomState.spring.wind.y *= 0.95;
         roomState.spring.wind.strength *= 0.95;
@@ -844,37 +934,41 @@
       const groundY = height * 0.72;
 
       for (let i = roomState.spring.airPetals.length - 1; i >= 0; i--) {
-        const p = roomState.spring.airPetals[i];
+        const petal = roomState.spring.airPetals[i];
+        petal.vy += 0.08;
 
-        p.vy += 0.08;
-
-        const dx = mouseX - p.x;
-        const dy = mouseY - p.y;
-        const d = sqrt(dx * dx + dy * dy);
-        const radius = 160;
-
-        if (d < radius && roomState.spring.wind.strength > 0.05) {
-          const infl = (1 - d / radius) * roomState.spring.wind.strength;
-          p.vx += roomState.spring.wind.x * infl * 0.3;
-          p.vy += roomState.spring.wind.y * infl * 0.3;
+        // Wind influence (hand-driven or mouse-driven)
+        let influenceX = mouseX;
+        let influenceY = mouseY;
+        if (window.handData && window.handData.hands.length > 0) {
+          influenceX = window.handData.hands[0].center.x;
+          influenceY = window.handData.hands[0].center.y;
         }
 
-        p.vx += random(-0.05, 0.05);
-        p.vx += p.drift;
-        p.vx *= 0.99;
+        const dx = influenceX - petal.x;
+        const dy = influenceY - petal.y;
+        const distToInfluence = sqrt(dx * dx + dy * dy);
+        const windInfluenceRadius = 160;
 
-        p.x += p.vx;
-        p.y += p.vy;
-        p.rot += p.rotSpeed;
+        if (distToInfluence < windInfluenceRadius && roomState.spring.wind.strength > 0.05) {
+          const influence = (1 - distToInfluence / windInfluenceRadius) * roomState.spring.wind.strength;
+          petal.vx += roomState.spring.wind.x * influence * 0.3;
+          petal.vy += roomState.spring.wind.y * influence * 0.3;
+        }
 
-        if (p.y >= groundY) {
+        petal.vx += random(-0.05, 0.05);
+        petal.vx += petal.drift;
+        petal.vx *= 0.99;
+
+        petal.x += petal.vx;
+        petal.y += petal.vy;
+        petal.rot += petal.rotSpeed;
+
+        if (petal.y >= groundY) {
           roomState.spring.groundPetals.push({
-            x: p.x,
-            y: groundY + random(-2, 5),
-            rot: p.rot,
-            size: p.size,
-            alpha: 0.9,
-            color: p.color
+            x: petal.x, y: groundY + random(-2, 5),
+            rot: petal.rot, size: petal.size,
+            alpha: 0.9, color: petal.color,
           });
           roomState.spring.airPetals.splice(i, 1);
 
@@ -883,16 +977,16 @@
             roomState.spring.groundPetals.splice(0, removeCount);
           }
         } else {
-          if (p.x < -20) p.x = width + 20;
-          if (p.x > width + 20) p.x = -20;
-          if (p.y < -50 || p.y > height + 50) roomState.spring.airPetals.splice(i, 1);
+          if (petal.x < -20) petal.x = width + 20;
+          if (petal.x > width + 20) petal.x = -20;
+          if (petal.y < -50 || petal.y > height + 50) roomState.spring.airPetals.splice(i, 1);
         }
       }
 
-      const maxAir = 180;
-      if (frameCount % 3 === 0) {
-        while (roomState.spring.airPetals.length < maxAir) spawnSpringPetal();
-      }
+      const maxAirPetals = 180;
+      while (roomState.spring.airPetals.length < maxAirPetals && frameCount % 3 === 0) spawnSpringPetal();
+
+      for (let gp of roomState.spring.groundPetals) if (random() > 0.98) gp.x += random(-0.5, 0.5);
 
       updateAmbientParticles(roomState.spring.ambientParticles);
     }
@@ -901,143 +995,212 @@
       for (let i = 0; i < height; i++) {
         const inter = map(i, 0, height, 0, 1);
         const c = lerpColor(color(180, 220, 255), color(255, 240, 220), inter);
-        stroke(c);
-        line(0, i, width, i);
+        stroke(c); line(0, i, width, i);
       }
 
       drawTechGrid(60, 10);
       drawAmbientParticles(roomState.spring.ambientParticles);
       drawStageBoundary();
 
-      fill(100, 180, 100, 120);
-      noStroke();
+      fill(100, 180, 100, 120); noStroke();
       rect(0, height * 0.72, width, height * 0.28);
 
       for (let gp of roomState.spring.groundPetals) {
         push();
-        translate(gp.x, gp.y);
-        rotate(gp.rot);
+        translate(gp.x, gp.y); rotate(gp.rot);
         fill(gp.color[0], gp.color[1], gp.color[2], gp.alpha * 200);
-        noStroke();
-        ellipse(0, 0, gp.size * 0.8, gp.size * 1.2);
+        noStroke(); ellipse(0, 0, gp.size * 0.8, gp.size * 1.2);
         pop();
       }
 
       const treeX = width / 2;
       const trunkBase = height * 0.72;
       const trunkTop = height * 0.45;
-      const sway = sin(frameCount * 0.02) * 3;
+      const swayOffset = sin(frameCount * 0.02) * 3;
 
       push();
-      fill(80, 60, 50, 200);
-      noStroke();
+      fill(80, 60, 50, 200); noStroke();
       rect(treeX - 15, trunkTop, 30, trunkBase - trunkTop);
 
-      stroke(90, 70, 60, 200);
-      strokeWeight(8);
-      noFill();
-
+      stroke(90, 70, 60, 200); strokeWeight(8); noFill();
       beginShape();
       vertex(treeX, trunkTop + 20);
-      bezierVertex(treeX - 40 + sway, trunkTop + 40, treeX - 80 + sway, trunkTop + 60, treeX - 110 + sway, trunkTop + 100);
+      bezierVertex(treeX - 40 + swayOffset, trunkTop + 40, treeX - 80 + swayOffset, trunkTop + 60, treeX - 110 + swayOffset, trunkTop + 100);
       endShape();
 
       beginShape();
       vertex(treeX, trunkTop + 20);
-      bezierVertex(treeX + 40 - sway, trunkTop + 40, treeX + 80 - sway, trunkTop + 60, treeX + 110 - sway, trunkTop + 100);
+      bezierVertex(treeX + 40 - swayOffset, trunkTop + 40, treeX + 80 - swayOffset, trunkTop + 60, treeX + 110 - swayOffset, trunkTop + 100);
       endShape();
 
+      strokeWeight(6);
+      beginShape();
+      vertex(treeX, trunkTop + 10);
+      bezierVertex(treeX - 30 + swayOffset * 0.8, trunkTop + 15, treeX - 60 + swayOffset * 0.8, trunkTop + 30, treeX - 85 + swayOffset * 0.8, trunkTop + 55);
+      endShape();
+
+      beginShape();
+      vertex(treeX, trunkTop + 10);
+      bezierVertex(treeX + 30 - swayOffset * 0.8, trunkTop + 15, treeX + 60 - swayOffset * 0.8, trunkTop + 30, treeX + 85 - swayOffset * 0.8, trunkTop + 55);
+      endShape();
+
+      strokeWeight(7);
+      beginShape();
+      vertex(treeX, trunkTop);
+      bezierVertex(treeX + swayOffset, trunkTop - 20, treeX + swayOffset * 1.2, trunkTop - 40, treeX + swayOffset * 1.5, trunkTop - 60);
+      endShape();
       pop();
 
       noStroke();
       for (let i = 0; i < 200; i++) {
-        const cx = treeX + random(-130, 130) + sway * random(-0.5, 0.5);
+        const cx = treeX + random(-130, 130) + swayOffset * random(-0.5, 0.5);
         const cy = trunkTop + random(-70, 120);
-        const dd = dist(cx, cy, treeX, trunkTop + 25);
-        if (dd < 140) {
+        const d = dist(cx, cy, treeX, trunkTop + 25);
+        if (d < 140) {
           fill(255, random(210, 230), random(220, 240), random(150, 220));
           circle(cx, cy, random(3, 7));
         }
       }
 
-      for (let p of roomState.spring.airPetals) {
-        push();
-        translate(p.x, p.y);
-        rotate(p.rot);
-        fill(p.color[0], p.color[1], p.color[2], 220);
-        noStroke();
-        ellipse(0, 0, p.size, p.size * 1.4);
+      for (let petal of roomState.spring.airPetals) {
+        push(); translate(petal.x, petal.y); rotate(petal.rot);
+        fill(petal.color[0], petal.color[1], petal.color[2], 220);
+        noStroke(); ellipse(0, 0, petal.size, petal.size * 1.4);
         pop();
       }
 
-      drawVignetteRadial(0.5);
+      drawSoftVignette();
 
       const windBar = Math.floor(roomState.spring.wind.strength * 20);
-      const windStr = "█".repeat(windBar) + "░".repeat(20 - windBar);
-      drawTopBar("SPRING ENVIRONMENT", `WIND:${windStr} | AIR:${roomState.spring.airPetals.length} | GROUND:${roomState.spring.groundPetals.length}`);
+      const windBarStr = "█".repeat(windBar) + "░".repeat(20 - windBar);
+      const statusText = `WIND: ${windBarStr} | AIR: ${roomState.spring.airPetals.length} | GROUND: ${roomState.spring.groundPetals.length}`;
+      drawTopBar("SPRING ENVIRONMENT", statusText);
 
-      drawInstructionPanel("INTERACTION PROTOCOL", "Wave one hand to create wind. Petals fall and accumulate on the ground.");
+      drawInstructionPanel("HAND GESTURE", "Wave your hand to create wind and blow petals.");
     }
 
     // ===========================================
-    // SUMMER
+    // SUMMER (Hand distance → wave amplitude, hand position → disturbance)
     // ===========================================
     function initializeSummer() {
-      roomState.summer.wavePoints = [];
-      const spacing = 20;
-      for (let x = 0; x <= width; x += spacing) {
-        for (let y = 0; y <= height; y += spacing) {
-          roomState.summer.wavePoints.push({ x, y, baseY: y, offset: random(TWO_PI) });
-        }
-      }
       roomState.summer.ambientParticles = generateAmbientParticles(30);
+      roomState.summer.t = 0;
+      roomState.summer.gfx = createGraphics(windowWidth, windowHeight, WEBGL);
+      roomState.summer.gfx.pixelDensity(1);
+      roomState.summer.gfx.noFill();
     }
 
     function updateSummer() {
-      for (let wp of roomState.summer.wavePoints) {
-        const w = sin(frameCount * 0.02 + wp.offset + wp.x * 0.01) * 15;
-        wp.y = wp.baseY + w;
-      }
+      roomState.summer.t += 0.012;
       updateAmbientParticles(roomState.summer.ambientParticles);
     }
 
     function drawSummer() {
       for (let i = 0; i < height; i++) {
         const inter = map(i, 0, height, 0, 1);
-        const c = lerpColor(color(100, 180, 255), color(20, 60, 120), inter);
-        stroke(c);
-        line(0, i, width, i);
+        const c = lerpColor(color(120, 190, 255), color(10, 25, 50), inter);
+        stroke(c); line(0, i, width, i);
       }
 
-      drawTechGrid(70, 12);
+      drawTechGrid(70, 10);
       drawAmbientParticles(roomState.summer.ambientParticles);
       drawStageBoundary();
 
-      stroke(150, 220, 255, 80);
-      strokeWeight(2);
-      for (let wp of roomState.summer.wavePoints) {
-        point(wp.x, wp.y);
-      }
+      const g = roomState.summer.gfx;
+      if (g) {
+        g.clear();
+        g.background(0, 0, 0, 0);
+        g.push();
 
-      noFill();
-      stroke(200, 240, 255, 120);
-      strokeWeight(1);
-      for (let y = height * 0.35; y < height * 0.7; y += 40) {
-        beginShape();
-        for (let x = 0; x <= width; x += 20) {
-          const w = sin(frameCount * 0.02 + x * 0.01 + y * 0.005) * 20;
-          vertex(x, y + w);
+        g.rotateX(-0.75);
+        g.translate(0, 120, 0);
+
+        const cols = 170;
+        const rows = 110;
+        const sx = width / cols;
+        const sy = height / rows;
+
+        // Hand gesture influence
+        let mx = map(mouseX, 0, width, -1, 1);
+        let my = map(mouseY, 0, height, -1, 1);
+        let waveAmplitude = 1.0;
+
+        if (window.handData && window.handData.hands.length > 0) {
+          const hand = window.handData.hands[0];
+          mx = map(hand.center.x, 0, width, -1, 1);
+          my = map(hand.center.y, 0, height, -1, 1);
+
+          if (window.handData.hands.length === 2) {
+            const h1 = window.handData.hands[0];
+            const h2 = window.handData.hands[1];
+            const dx = h1.center.x - h2.center.x;
+            const dy = h1.center.y - h2.center.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+            waveAmplitude = map(dist, 100, 500, 0.5, 2.5, true);
+          }
         }
-        endShape();
+
+        g.stroke(170, 220, 255, 85);
+        g.strokeWeight(1);
+
+        for (let y = 0; y < rows; y += 2) {
+          g.beginShape();
+          for (let x = 0; x < cols; x++) {
+            const nx = x / cols;
+            const ny = y / rows;
+
+            const w1 = sin((nx * 7.0) + roomState.summer.t * 2.0);
+            const w2 = cos((ny * 6.0) + roomState.summer.t * 1.6);
+            let z = (w1 + w2) * 18 * waveAmplitude;
+
+            z += (noise(nx * 2.2, ny * 2.2, roomState.summer.t) - 0.5) * 35 * waveAmplitude;
+
+            const dx = (nx * 2 - 1) - mx;
+            const dy = (ny * 2 - 1) - my;
+            const d = sqrt(dx*dx + dy*dy);
+            z += max(0, 1 - d * 1.8) * 60;
+
+            const px = (x - cols / 2) * sx;
+            const py = (y - rows / 2) * sy;
+
+            g.vertex(px, py, z);
+          }
+          g.endShape();
+        }
+
+        g.stroke(200, 240, 255, 110);
+        g.strokeWeight(2);
+        for (let i = 0; i < 1200; i++) {
+          const x = (i % cols);
+          const y = Math.floor(i / cols) % rows;
+          const nx = x / cols;
+          const ny = y / rows;
+          const w = sin((nx * 7.0) + roomState.summer.t * 2.0) + cos((ny * 6.0) + roomState.summer.t * 1.6);
+          const z = w * 14 * waveAmplitude + (noise(nx * 2.2, ny * 2.2, roomState.summer.t) - 0.5) * 28 * waveAmplitude;
+          const px = (x - cols / 2) * sx;
+          const py = (y - rows / 2) * sy;
+          if (random() < 0.22) g.point(px, py, z);
+        }
+
+        g.pop();
+        image(g, 0, 0, width, height);
       }
 
-      drawVignetteRadial(0.5);
-      drawTopBar("SUMMER ENVIRONMENT", "GESTURE MODE: INACTIVE");
-      drawInstructionPanel("INTERACTION PROTOCOL", "Two hands detected will enable wave surface deformation. Hand positions control amplitude and frequency.");
+      drawSoftVignette();
+
+      let gestureStatus = "MOUSE FALLBACK";
+      if (window.handData && window.handData.hands.length === 2) {
+        gestureStatus = "DUAL HAND: WAVE AMPLITUDE CONTROL";
+      } else if (window.handData && window.handData.hands.length === 1) {
+        gestureStatus = "SINGLE HAND: LOCAL DISTURBANCE";
+      }
+
+      drawTopBar("SUMMER ENVIRONMENT", gestureStatus);
+      drawInstructionPanel("HAND GESTURE", "Use two hands to control wave amplitude. One hand creates local disturbance.");
     }
 
     // ===========================================
-    // AUTUMN
+    // AUTUMN (Pinch gesture → pick apples)
     // ===========================================
     function initializeAutumn() {
       roomState.autumn.apples = [];
@@ -1050,26 +1213,46 @@
           size: random(20, 30),
           picked: false,
           falling: false,
-          vy: 0
+          vy: 0,
         });
       }
       roomState.autumn.ambientParticles = generateAmbientParticles(30);
     }
 
     function updateAutumn() {
-      for (let a of roomState.autumn.apples) {
-        if (a.falling) {
-          a.vy += 0.5;
-          a.y += a.vy;
-
-          const b = roomState.autumn.basket;
-          if (a.y >= b.y && a.x >= b.x - b.width / 2 && a.x <= b.x + b.width / 2) {
-            a.picked = true;
-            a.falling = false;
+      // Pinch gesture → pick nearest apple
+      if (window.handData && window.handData.hands.length > 0) {
+        const hand = window.handData.hands[0];
+        if (hand.pinch.isPinching) {
+          let nearest = null;
+          let minDist = Infinity;
+          for (let apple of roomState.autumn.apples) {
+            if (!apple.picked && !apple.falling) {
+              const d = dist(hand.center.x, hand.center.y, apple.x, apple.y);
+              if (d < minDist && d < 80) {
+                minDist = d;
+                nearest = apple;
+              }
+            }
           }
-          if (a.y > height + 50) {
-            a.falling = false;
-            a.y = -1000;
+          if (nearest) nearest.falling = true;
+        }
+      }
+
+      for (let apple of roomState.autumn.apples) {
+        if (apple.falling) {
+          apple.vy += 0.5;
+          apple.y += apple.vy;
+
+          if (apple.y >= roomState.autumn.basket.y &&
+              apple.x >= roomState.autumn.basket.x - roomState.autumn.basket.width / 2 &&
+              apple.x <= roomState.autumn.basket.x + roomState.autumn.basket.width / 2) {
+            apple.picked = true;
+            apple.falling = false;
+          }
+          if (apple.y > height + 50) {
+            apple.falling = false;
+            apple.y = -1000;
           }
         }
       }
@@ -1080,46 +1263,62 @@
       for (let i = 0; i < height; i++) {
         const inter = map(i, 0, height, 0, 1);
         const c = lerpColor(color(255, 200, 150), color(200, 120, 80), inter);
-        stroke(c);
-        line(0, i, width, i);
+        stroke(c); line(0, i, width, i);
       }
 
       drawTechGrid(65, 8);
       drawAmbientParticles(roomState.autumn.ambientParticles);
       drawStageBoundary();
 
-      fill(160, 100, 60, 120);
-      noStroke();
+      fill(160, 100, 60, 120); noStroke();
       rect(0, height * 0.7, width, height * 0.3);
 
       fill(100, 60, 40, 150);
       rect(width / 2 - 20, height * 0.35, 40, height * 0.35);
       ellipse(width / 2, height * 0.4, 280, 180);
 
-      const b = roomState.autumn.basket;
       fill(160, 120, 80);
-      stroke(100, 70, 50);
-      strokeWeight(2);
-      rect(b.x - b.width / 2, b.y, b.width, b.height, 5);
+      stroke(100, 70, 50); strokeWeight(2);
+      rect(roomState.autumn.basket.x - roomState.autumn.basket.width / 2,
+           roomState.autumn.basket.y,
+           roomState.autumn.basket.width,
+           roomState.autumn.basket.height, 5);
 
       noStroke();
-      for (let a of roomState.autumn.apples) {
-        if (!a.picked && a.y > -100) {
+      for (let apple of roomState.autumn.apples) {
+        if (!apple.picked && apple.y > -100) {
           fill(220, 50, 50);
-          circle(a.x, a.y, a.size);
-          stroke(100, 60, 40);
-          strokeWeight(2);
-          line(a.x, a.y - a.size / 2, a.x, a.y - a.size / 2 - 5);
+          circle(apple.x, apple.y, apple.size);
+          stroke(100, 60, 40); strokeWeight(2);
+          line(apple.x, apple.y - apple.size / 2, apple.x, apple.y - apple.size / 2 - 5);
         }
       }
 
-      drawVignetteRadial(0.5);
-      drawTopBar("AUTUMN ENVIRONMENT", "GESTURE MODE: INACTIVE");
-      drawInstructionPanel("INTERACTION PROTOCOL", "Single hand picking gesture will trigger apple harvest. Target apples and bring hand down to collect.");
+      // Hand pinch visualization
+      if (window.handData && window.handData.hands.length > 0) {
+        const hand = window.handData.hands[0];
+        push();
+        noFill();
+        stroke(100, 200, 255, hand.pinch.value * 200);
+        strokeWeight(3);
+        circle(hand.center.x, hand.center.y, 60);
+        pop();
+      }
+
+      drawSoftVignette();
+
+      let gestureStatus = "MOUSE FALLBACK";
+      if (window.handData && window.handData.hands.length > 0) {
+        const hand = window.handData.hands[0];
+        gestureStatus = hand.pinch.isPinching ? "PINCHING: HARVESTING" : "HAND DETECTED: PINCH TO PICK";
+      }
+
+      drawTopBar("AUTUMN ENVIRONMENT", gestureStatus);
+      drawInstructionPanel("HAND GESTURE", "Pinch near an apple to make it fall into the basket.");
     }
 
     // ===========================================
-    // WINTER
+    // WINTER (Dual hand movement → trace intensity)
     // ===========================================
     function initializeWinter() {
       roomState.winter.snowParticles = [];
@@ -1130,23 +1329,39 @@
           y: random(height),
           vx: random(-0.3, 0.3),
           vy: random(0.5, 1.5),
-          size: random(2, 6)
+          size: random(2, 6),
         });
       }
       roomState.winter.ambientParticles = generateAmbientParticles(30);
     }
 
     function updateWinter() {
-      for (let s of roomState.winter.snowParticles) {
-        s.x += s.vx; s.y += s.vy;
-        if (s.y > height) { s.y = -10; s.x = random(width); }
-        if (s.x < 0) s.x = width;
-        if (s.x > width) s.x = 0;
+      for (let snow of roomState.winter.snowParticles) {
+        snow.x += snow.vx;
+        snow.y += snow.vy;
+        if (snow.y > height) { snow.y = -10; snow.x = random(width); }
+        if (snow.x < 0) snow.x = width;
+        if (snow.x > width) snow.x = 0;
       }
 
-      if (mouseIsPressed) {
+      // Hand gesture → traces
+      if (window.handData && window.handData.hands.length > 0) {
+        for (let hand of window.handData.hands) {
+          if (hand.velocity.speed > 3) {
+            const intensity = Math.min(1, hand.velocity.speed / 30);
+            for (let i = 0; i < Math.floor(intensity * 5); i++) {
+              roomState.winter.traces.push({
+                x: hand.center.x + random(-10, 10),
+                y: hand.center.y + random(-10, 10),
+                life: intensity
+              });
+            }
+          }
+        }
+      } else if (mouseIsPressed) {
         roomState.winter.traces.push({ x: mouseX, y: mouseY, life: 1.0 });
       }
+
       for (let i = roomState.winter.traces.length - 1; i >= 0; i--) {
         roomState.winter.traces[i].life -= 0.01;
         if (roomState.winter.traces[i].life <= 0) roomState.winter.traces.splice(i, 1);
@@ -1159,37 +1374,39 @@
       for (let i = 0; i < height; i++) {
         const inter = map(i, 0, height, 0, 1);
         const c = lerpColor(color(200, 220, 240), color(240, 250, 255), inter);
-        stroke(c);
-        line(0, i, width, i);
+        stroke(c); line(0, i, width, i);
       }
 
       drawTechGrid(55, 8);
       drawAmbientParticles(roomState.winter.ambientParticles);
       drawStageBoundary();
 
-      fill(240, 245, 255, 150);
-      noStroke();
+      fill(240, 245, 255, 150); noStroke();
       rect(0, height * 0.7, width, height * 0.3);
 
-      for (let t of roomState.winter.traces) {
-        fill(150, 200, 255, t.life * 150);
+      for (let tr of roomState.winter.traces) {
+        fill(150, 200, 255, tr.life * 150);
         noStroke();
-        circle(t.x, t.y, 15);
+        circle(tr.x, tr.y, 15);
       }
 
-      fill(255, 255, 255, 180);
-      noStroke();
-      for (let s of roomState.winter.snowParticles) circle(s.x, s.y, s.size);
+      fill(255, 255, 255, 180); noStroke();
+      for (let snow of roomState.winter.snowParticles) circle(snow.x, snow.y, snow.size);
 
       fill(255, 255, 255, 200);
-      stroke(200, 220, 240);
-      strokeWeight(2);
+      stroke(200, 220, 240); strokeWeight(2);
       circle(width / 2, height * 0.5, 70);
       circle(width / 2, height * 0.6, 90);
 
-      drawVignetteRadial(0.5);
-      drawTopBar("WINTER ENVIRONMENT", "GESTURE MODE: INACTIVE");
-      drawInstructionPanel("INTERACTION PROTOCOL", "Two hands sculpting motion will manipulate snow particles and create persistent trace patterns.");
+      drawSoftVignette();
+
+      let gestureStatus = "MOUSE FALLBACK";
+      if (window.handData && window.handData.hands.length > 0) {
+        gestureStatus = `HANDS: ${window.handData.hands.length} | SCULPTING SNOW`;
+      }
+
+      drawTopBar("WINTER ENVIRONMENT", gestureStatus);
+      drawInstructionPanel("HAND GESTURE", "Move your hands to sculpt snow particles and create traces.");
     }
 
     // ===========================================
@@ -1207,52 +1424,47 @@
       connections = generateConnections();
       portals = setupPortals();
 
-      document.getElementById("backButton").addEventListener("click", function (e) {
+      const backButton = document.getElementById("backButton");
+      backButton.addEventListener("click", (e) => {
+        e.preventDefault();
         e.stopPropagation();
         setState("hub");
-      });
+        return false;
+      }, true);
 
       window.setState = setState;
 
-      document.addEventListener("keydown", function (e) {
+      document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && currentState !== "hub") setState("hub");
       });
 
-      console.log("Hub initialized successfully!");
+      initializeCameraPreview();
+
+      console.log("✅ Hub initialized successfully!");
     }
 
     function draw() {
       if (currentState === "hub") {
         drawHub();
       } else if (currentState === "spring") {
-        updateSpring(handLandmarks);
-        drawSpring();
+        updateSpring(); drawSpring();
       } else if (currentState === "summer") {
-        updateSummer(handLandmarks);
-        drawSummer();
+        updateSummer(); drawSummer();
       } else if (currentState === "autumn") {
-        updateAutumn(handLandmarks);
-        drawAutumn();
+        updateAutumn(); drawAutumn();
       } else if (currentState === "winter") {
-        updateWinter(handLandmarks);
-        drawWinter();
+        updateWinter(); drawWinter();
       }
 
-      // MediaPipe debug overlay and data panel (always show)
-      drawHandDebugOverlay();
-      drawGestureDataPanel();
-
-      if (frameCount % 60 === 0) console.log(`FPS: ${Math.round(frameRate())}`);
+      updateDebugOverlay();
+      drawHandPreview();
     }
 
     function drawHub() {
       background(0, 0, 0, 25);
-
       for (let p of dustParticles) p.draw();
-
       updateHubParticles();
       handleHubMouseField();
-
       drawHubTree();
       for (let portal of portals) portal.draw();
     }
@@ -1262,16 +1474,23 @@
       treeParticles = generateTreePoints();
       connections = generateConnections();
       portals = setupPortals();
+
+      if (roomState.summer.gfx) {
+        roomState.summer.gfx.resizeCanvas(windowWidth, windowHeight);
+      }
     }
 
-    function mouseClicked() {
+    function mouseClicked(event) {
+      if (event && event.target && event.target.id === "backButton") return false;
+
       if (currentState === "hub") {
         for (let portal of portals) portal.click();
       } else if (currentState === "autumn") {
-        for (let a of roomState.autumn.apples) {
-          if (!a.picked && !a.falling) {
-            const d = dist(mouseX, mouseY, a.x, a.y);
-            if (d < a.size / 2) a.falling = true;
+        // Mouse fallback for autumn
+        for (let apple of roomState.autumn.apples) {
+          if (!apple.picked && !apple.falling) {
+            const d = dist(mouseX, mouseY, apple.x, apple.y);
+            if (d < apple.size / 2) apple.falling = true;
           }
         }
       }
@@ -1284,10 +1503,10 @@
         cursor(hovering ? "pointer" : "default");
       } else if (currentState === "autumn") {
         let hoveringApple = false;
-        for (let a of roomState.autumn.apples) {
-          if (!a.picked && !a.falling) {
-            const d = dist(mouseX, mouseY, a.x, a.y);
-            if (d < a.size / 2) { hoveringApple = true; break; }
+        for (let apple of roomState.autumn.apples) {
+          if (!apple.picked && !apple.falling) {
+            const d = dist(mouseX, mouseY, apple.x, apple.y);
+            if (d < apple.size / 2) { hoveringApple = true; break; }
           }
         }
         cursor(hoveringApple ? "pointer" : "default");
