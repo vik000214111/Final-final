@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Particle Cloud Hub - Mysterious Tree Portal</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: 'Courier New', monospace;
+        }
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: rgba(100, 200, 255, 0.6);
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        Hover over portals to interact • Click to enter season realms
+    </div>
+
+    <script>
+        // ===========================================
+        // MYSTERY LEVEL CONFIGURATION
+        // ===========================================
+        const CONFIG = {
+            // Tree particle settings
+            TREE_PARTICLE_COUNT: 2500,        // Total points in tree (adjust for density)
+            PARTICLE_SIZE_MIN: 1.5,           // Minimum particle size
+            PARTICLE_SIZE_MAX: 3.5,           // Maximum particle size
+
+            // Breathing/pulsing effect
+            PULSE_SPEED: 0.015,               // Speed of brightness breathing (lower = slower)
+            PULSE_AMOUNT: 0.4,                // Intensity of pulse (0-1)
+
+            // Neural network connections
+            CONNECTION_COUNT: 150,            // Max number of connecting lines
+            CONNECTION_DISTANCE: 45,          // Max distance to connect particles
+            CONNECTION_ALPHA: 0.3,            // Line opacity
+
+            // Floating dust
+            DUST_COUNT: 200,                  // Number of ambient dust particles
+            DUST_SPEED: 0.3,                  // Dust movement speed
+
+            // Mouse interaction field
+            MOUSE_FIELD_RADIUS: 180,          // Radius of mouse influence
+            MOUSE_FIELD_STRENGTH: 15,         // Displacement strength
+
+            // Visual style
+            PARTICLE_COLOR: [100, 200, 255],  // RGB for tree particles
+            DUST_COLOR: [150, 180, 200],      // RGB for dust
+            CONNECTION_COLOR: [80, 160, 220], // RGB for connecting lines
+        };
+
+        // ===========================================
+        // GLOBAL STATE
+        // ===========================================
+        let treeParticles = [];
+        let dustParticles = [];
+        let connections = [];
+        let portals = [];
+        let timeOffset = 0;
+        let mouseFieldActive = false;
+
+        // Tree structure
+        class TreeBranch {
+            constructor(x1, y1, x2, y2, depth) {
+                this.x1 = x1;
+                this.y1 = y1;
+                this.x2 = x2;
+                this.y2 = y2;
+                this.depth = depth;
+                this.length = dist(x1, y1, x2, y2);
+            }
+        }
+
+        // Particle class
+        class Particle {
+            constructor(x, y, size, isTree = true) {
+                this.homeX = x;
+                this.homeY = y;
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.isTree = isTree;
+                this.phase = random(TWO_PI); // For breathing effect
+                this.alpha = 1.0;
+
+                // Dust-specific properties
+                if (!isTree) {
+                    this.vx = random(-CONFIG.DUST_SPEED, CONFIG.DUST_SPEED);
+                    this.vy = random(-CONFIG.DUST_SPEED, CONFIG.DUST_SPEED);
+                    this.alpha = random(0.2, 0.6);
+                }
+            }
+
+            update() {
+                if (this.isTree) {
+                    // Apply breathing effect
+                    const breathe = sin(timeOffset * CONFIG.PULSE_SPEED + this.phase);
+                    this.alpha = map(breathe, -1, 1,
+                        1 - CONFIG.PULSE_AMOUNT,
+                        1);
+
+                    // Apply mouse field influence
+                    if (mouseFieldActive) {
+                        const dx = mouseX - this.homeX;
+                        const dy = mouseY - this.homeY;
+                        const distance = sqrt(dx * dx + dy * dy);
+
+                        if (distance < CONFIG.MOUSE_FIELD_RADIUS && distance > 0) {
+                            const force = (1 - distance / CONFIG.MOUSE_FIELD_RADIUS);
+                            const angle = atan2(dy, dx);
+                            const displacement = force * CONFIG.MOUSE_FIELD_STRENGTH;
+
+                            // Smoothly move away from mouse
+                            this.x = lerp(this.x,
+                                this.homeX - cos(angle) * displacement,
+                                0.1);
+                            this.y = lerp(this.y,
+                                this.homeY - sin(angle) * displacement,
+                                0.1);
+                        } else {
+                            // Return to home position
+                            this.x = lerp(this.x, this.homeX, 0.05);
+                            this.y = lerp(this.y, this.homeY, 0.05);
+                        }
+                    } else {
+                        // Return to home position
+                        this.x = lerp(this.x, this.homeX, 0.05);
+                        this.y = lerp(this.y, this.homeY, 0.05);
+                    }
+                } else {
+                    // Dust particle movement
+                    this.x += this.vx;
+                    this.y += this.vy;
+
+                    // Wrap around screen
+                    if (this.x < 0) this.x = width;
+                    if (this.x > width) this.x = 0;
+                    if (this.y < 0) this.y = height;
+                    if (this.y > height) this.y = 0;
+                }
+            }
+
+            draw() {
+                if (this.isTree) {
+                    fill(CONFIG.PARTICLE_COLOR[0],
+                         CONFIG.PARTICLE_COLOR[1],
+                         CONFIG.PARTICLE_COLOR[2],
+                         this.alpha * 255);
+                } else {
+                    fill(CONFIG.DUST_COLOR[0],
+                         CONFIG.DUST_COLOR[1],
+                         CONFIG.DUST_COLOR[2],
+                         this.alpha * 255);
+                }
+                noStroke();
+                circle(this.x, this.y, this.size);
+            }
+        }
+
+        // Portal class
+        class Portal {
+            constructor(x, y, label, season) {
+                this.x = x;
+                this.y = y;
+                this.label = label;
+                this.season = season;
+                this.radius = 50;
+                this.hovered = false;
+                this.glowParticles = [];
+                this.pulse = 0;
+            }
+
+            update() {
+                // Check hover
+                const d = dist(mouseX, mouseY, this.x, this.y);
+                this.hovered = d < this.radius;
+
+                // Update pulse
+                this.pulse += 0.05;
+
+                // Emit particles on hover
+                if (this.hovered && frameCount % 3 === 0) {
+                    const angle = random(TWO_PI);
+                    const r = random(this.radius * 0.8, this.radius * 1.2);
+                    this.glowParticles.push({
+                        x: this.x + cos(angle) * r,
+                        y: this.y + sin(angle) * r,
+                        vx: cos(angle) * 0.5,
+                        vy: sin(angle) * 0.5,
+                        life: 1.0,
+                        size: random(2, 4)
+                    });
+                }
+
+                // Update glow particles
+                for (let i = this.glowParticles.length - 1; i >= 0; i--) {
+                    let p = this.glowParticles[i];
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.life -= 0.02;
+                    if (p.life <= 0) {
+                        this.glowParticles.splice(i, 1);
+                    }
+                }
+            }
+
+            draw() {
+                push();
+
+                // Draw glow particles
+                for (let p of this.glowParticles) {
+                    fill(CONFIG.PARTICLE_COLOR[0],
+                         CONFIG.PARTICLE_COLOR[1],
+                         CONFIG.PARTICLE_COLOR[2],
+                         p.life * 200);
+                    noStroke();
+                    circle(p.x, p.y, p.size);
+                }
+
+                // Portal ring
+                noFill();
+                const brightness = this.hovered ? 255 : 150;
+                const pulseOffset = sin(this.pulse) * 3;
+
+                stroke(CONFIG.PARTICLE_COLOR[0],
+                       CONFIG.PARTICLE_COLOR[1],
+                       CONFIG.PARTICLE_COLOR[2],
+                       brightness);
+                strokeWeight(2);
+                circle(this.x, this.y, this.radius * 2 + pulseOffset);
+
+                // Inner glow when hovered
+                if (this.hovered) {
+                    stroke(CONFIG.PARTICLE_COLOR[0],
+                           CONFIG.PARTICLE_COLOR[1],
+                           CONFIG.PARTICLE_COLOR[2],
+                           100);
+                    strokeWeight(1);
+                    circle(this.x, this.y, this.radius * 2.2);
+                }
+
+                // Label
+                fill(CONFIG.PARTICLE_COLOR[0],
+                     CONFIG.PARTICLE_COLOR[1],
+                     CONFIG.PARTICLE_COLOR[2],
+                     brightness);
+                noStroke();
+                textAlign(CENTER, CENTER);
+                textSize(14);
+                text(this.label, this.x, this.y);
+
+                pop();
+            }
+
+            click() {
+                if (this.hovered) {
+                    console.log(`Navigating to ${this.season} room...`);
+                    // In a real implementation, navigate to season pages
+                    // window.location.href = `${this.season}.html`;
+                    alert(`Entering ${this.season} realm...\n(Navigation placeholder)`);
+                }
+            }
+        }
+
+        // ===========================================
+        // TREE GENERATION
+        // ===========================================
+        function generateTreePoints() {
+            console.log("Generating tree structure...");
+            const branches = [];
+            const particles = [];
+
+            // Start with trunk at bottom center
+            const trunkBase = { x: width / 2, y: height * 0.85 };
+            const trunkTop = { x: width / 2, y: height * 0.45 };
+
+            // Recursively generate branches
+            function createBranch(x1, y1, angle, length, depth) {
+                if (depth > 7 || length < 8) return;
+
+                const x2 = x1 + cos(angle) * length;
+                const y2 = y1 + sin(angle) * length;
+
+                branches.push(new TreeBranch(x1, y1, x2, y2, depth));
+
+                // Create child branches
+                const angleVar = random(0.3, 0.5);
+                const lengthReduce = random(0.65, 0.75);
+
+                createBranch(x2, y2, angle - angleVar, length * lengthReduce, depth + 1);
+                createBranch(x2, y2, angle + angleVar, length * lengthReduce, depth + 1);
+
+                // Sometimes add a middle branch
+                if (random() > 0.7 && depth < 5) {
+                    createBranch(x2, y2, angle + random(-0.2, 0.2),
+                                length * lengthReduce * 0.8, depth + 1);
+                }
+            }
+
+            // Generate main trunk and branches
+            branches.push(new TreeBranch(
+                trunkBase.x, trunkBase.y,
+                trunkTop.x, trunkTop.y,
+                0
+            ));
+
+            createBranch(trunkTop.x, trunkTop.y, -PI/2, 80, 1);
+
+            console.log(`Generated ${branches.length} branches`);
+
+            // Sample particles along branches
+            const pointsPerBranch = Math.floor(CONFIG.TREE_PARTICLE_COUNT / branches.length);
+
+            for (let branch of branches) {
+                // Density increases toward tips
+                const density = map(branch.depth, 0, 7, 0.5, 1.5);
+                const numPoints = Math.floor(pointsPerBranch * density);
+
+                for (let i = 0; i < numPoints; i++) {
+                    const t = i / numPoints;
+                    const x = lerp(branch.x1, branch.x2, t) + random(-3, 3);
+                    const y = lerp(branch.y1, branch.y2, t) + random(-3, 3);
+
+                    // Size varies by depth (tips are smaller)
+                    const size = map(branch.depth, 0, 7,
+                        CONFIG.PARTICLE_SIZE_MAX,
+                        CONFIG.PARTICLE_SIZE_MIN);
+
+                    particles.push(new Particle(x, y, size + random(-0.5, 0.5), true));
+                }
+            }
+
+            console.log(`Created ${particles.length} tree particles`);
+            return particles;
+        }
+
+        // ===========================================
+        // DUST GENERATION
+        // ===========================================
+        function generateDustParticles() {
+            const dust = [];
+            for (let i = 0; i < CONFIG.DUST_COUNT; i++) {
+                const x = random(width);
+                const y = random(height);
+                const size = random(1, 2.5);
+                dust.push(new Particle(x, y, size, false));
+            }
+            console.log(`Created ${dust.length} dust particles`);
+            return dust;
+        }
+
+        // ===========================================
+        // CONNECTION GENERATION
+        // ===========================================
+        function generateConnections() {
+            // Use spatial grid for efficient nearest neighbor search
+            const connections = [];
+            const gridSize = CONFIG.CONNECTION_DISTANCE;
+            const grid = {};
+
+            // Build spatial grid
+            for (let p of treeParticles) {
+                const gx = Math.floor(p.homeX / gridSize);
+                const gy = Math.floor(p.homeY / gridSize);
+                const key = `${gx},${gy}`;
+                if (!grid[key]) grid[key] = [];
+                grid[key].push(p);
+            }
+
+            // Find connections (limit total count for performance)
+            for (let p1 of treeParticles) {
+                if (connections.length >= CONFIG.CONNECTION_COUNT) break;
+
+                const gx = Math.floor(p1.homeX / gridSize);
+                const gy = Math.floor(p1.homeY / gridSize);
+
+                // Check neighboring cells
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dy = -1; dy <= 1; dy++) {
+                        const key = `${gx + dx},${gy + dy}`;
+                        const neighbors = grid[key] || [];
+
+                        for (let p2 of neighbors) {
+                            if (p1 === p2) continue;
+
+                            const d = dist(p1.homeX, p1.homeY, p2.homeX, p2.homeY);
+                            if (d < CONFIG.CONNECTION_DISTANCE) {
+                                connections.push({ p1, p2, dist: d });
+                                if (connections.length >= CONFIG.CONNECTION_COUNT) {
+                                    return connections;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            console.log(`Created ${connections.length} connections`);
+            return connections;
+        }
+
+        // ===========================================
+        // PORTAL SETUP
+        // ===========================================
+        function setupPortals() {
+            const centerX = width / 2;
+            const centerY = height * 0.6;
+            const radius = Math.min(width, height) * 0.4;
+
+            return [
+                new Portal(centerX - radius, centerY - radius * 0.3, "SPRING", "spring"),
+                new Portal(centerX + radius, centerY - radius * 0.3, "SUMMER", "summer"),
+                new Portal(centerX - radius, centerY + radius * 0.5, "AUTUMN", "autumn"),
+                new Portal(centerX + radius, centerY + radius * 0.5, "WINTER", "winter")
+            ];
+        }
+
+        // ===========================================
+        // UPDATE FUNCTIONS
+        // ===========================================
+        function updateHubParticles() {
+            // Update tree particles
+            for (let p of treeParticles) {
+                p.update();
+            }
+
+            // Update dust particles
+            for (let p of dustParticles) {
+                p.update();
+            }
+
+            // Update portals
+            for (let portal of portals) {
+                portal.update();
+            }
+
+            // Update time
+            timeOffset++;
+        }
+
+        // ===========================================
+        // DRAW FUNCTIONS
+        // ===========================================
+        function drawHubTree() {
+            // Draw connecting lines first (behind particles)
+            stroke(CONFIG.CONNECTION_COLOR[0],
+                   CONFIG.CONNECTION_COLOR[1],
+                   CONFIG.CONNECTION_COLOR[2],
+                   CONFIG.CONNECTION_ALPHA * 255);
+            strokeWeight(0.5);
+
+            for (let conn of connections) {
+                // Fade based on distance
+                const alpha = map(conn.dist, 0, CONFIG.CONNECTION_DISTANCE,
+                    CONFIG.CONNECTION_ALPHA, 0);
+                stroke(CONFIG.CONNECTION_COLOR[0],
+                       CONFIG.CONNECTION_COLOR[1],
+                       CONFIG.CONNECTION_COLOR[2],
+                       alpha * 255);
+                line(conn.p1.x, conn.p1.y, conn.p2.x, conn.p2.y);
+            }
+
+            // Draw particles
+            for (let p of treeParticles) {
+                p.draw();
+            }
+        }
+
+        // ===========================================
+        // MOUSE INTERACTION
+        // ===========================================
+        function handleHubMouseField() {
+            mouseFieldActive = (mouseX > 0 && mouseX < width &&
+                               mouseY > 0 && mouseY < height);
+        }
+
+        // ===========================================
+        // P5.JS MAIN FUNCTIONS
+        // ===========================================
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+
+            // Generate all elements
+            treeParticles = generateTreePoints();
+            dustParticles = generateDustParticles();
+            connections = generateConnections();
+            portals = setupPortals();
+
+            console.log("Hub initialized successfully!");
+        }
+
+        function draw() {
+            // Dark background with slight transparency for trail effect
+            background(0, 0, 0, 25);
+
+            // Draw dust layer (background)
+            for (let p of dustParticles) {
+                p.draw();
+            }
+
+            // Update all elements
+            updateHubParticles();
+            handleHubMouseField();
+
+            // Draw tree with connections
+            drawHubTree();
+
+            // Draw portals (foreground)
+            for (let portal of portals) {
+                portal.draw();
+            }
+
+            // Performance indicator
+            if (frameCount % 60 === 0) {
+                console.log(`FPS: ${Math.round(frameRate())}`);
+            }
+        }
+
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+
+            // Regenerate everything on resize
+            treeParticles = generateTreePoints();
+            connections = generateConnections();
+            portals = setupPortals();
+        }
+
+        function mouseClicked() {
+            // Check portal clicks
+            for (let portal of portals) {
+                portal.click();
+            }
+        }
+
+        // Cursor feedback
+        function mouseMoved() {
+            let hovering = false;
+            for (let portal of portals) {
+                if (portal.hovered) {
+                    hovering = true;
+                    break;
+                }
+            }
+            cursor(hovering ? 'pointer' : 'default');
+        }
+    </script>
+</body>
+</html>
