@@ -712,7 +712,7 @@
         prevMouseX:0, prevMouseY:0
       },
       summer: { ambientParticles: [], gfx: null, cols: 160, rows: 90, t: 0 },
-      autumn: { apples: [], basket: null, ambientParticles: [] },
+      autumn: { apples: [], basket: null, ambientParticles: [], groundFruits: [], groundLeaves: [] },
       winter: { snowParticles: [], traces: [], ambientParticles: [] },
     };
 
@@ -1601,6 +1601,27 @@
       }
 
       roomState.autumn.ambientParticles = generateAmbientParticles(26);
+
+      roomState.autumn.groundFruits = [];
+      for (let i = 0; i < 32; i++) {
+        roomState.autumn.groundFruits.push({
+          x: width * 0.18 + random(-60, 260),
+          y: height * 0.82 + random(-10, 60),
+          r: random(10, 18),
+          a: random(110, 170)
+        });
+      }
+
+      roomState.autumn.groundLeaves = [];
+      for (let i = 0; i < 60; i++) {
+        roomState.autumn.groundLeaves.push({
+          x: random(width),
+          y: random(height * 0.70, height),
+          w: random(6, 14),
+          h: random(3, 8),
+          a: random(40, 90)
+        });
+      }
     }
 
     function updateAutumn() {
@@ -1725,13 +1746,13 @@
 
       // 地面落果/落叶（更"果园"）
       noStroke();
-      for(let i=0;i<32;i++){
-        fill(220,60,50, random(110,170));
-        circle(width*0.18 + random(-60,260), height*0.82 + random(-10,60), random(10,18));
+      for (const f of roomState.autumn.groundFruits) {
+        fill(220, 60, 50, f.a);
+        circle(f.x, f.y, f.r);
       }
-      for(let i=0;i<60;i++){
-        fill(210, 140, 60, random(40,90));
-        ellipse(random(width), random(height*0.70, height), random(6,14), random(3,8));
+      for (const l of roomState.autumn.groundLeaves) {
+        fill(210, 140, 60, l.a);
+        ellipse(l.x, l.y, l.w, l.h);
       }
 
       // 篮子（更像"有体积"的篮子）
